@@ -17,33 +17,33 @@ import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.modul
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
 
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        username: config.get<string>('DB_USERNAME', 'postgres'),
-        password: config.get<string>('DB_PASSWORD', 'postgres'),
-        database: config.get<string>('DB_NAME', 'nextstep'),
-        autoLoadEntities: true,
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
-      }),
-    }),
+    // TypeOrmModule.forRootAsync({
+    //   imports: [ConfigModule],
+    //   inject: [ConfigService],
+    //   useFactory: (config: ConfigService) => ({
+    //     type: 'postgres',
+    //     host: config.get<string>('DB_HOST', 'localhost'),
+    //     port: config.get<number>('DB_PORT', 5432),
+    //     username: config.get<string>('DB_USERNAME', 'postgres'),
+    //     password: config.get<string>('DB_PASSWORD', 'postgres'),
+    //     database: config.get<string>('DB_NAME', 'nextstep'),
+    //     autoLoadEntities: true,
+    //     synchronize: config.get<string>('NODE_ENV') !== 'production',
+    //   }),
+    // }),
 
     ScheduleModule.forRoot(),
 
     AuthModule,
-    UserProfileModule,
-    QuestionnaireModule,
-    OpenFinanceModule,
-    FinancialAnalysisModule,
-    EventDetectionModule,
-    RoadmapModule,
-    GoalsModule,
-    NotificationsModule,
-    LlmOrchestratorModule,
+    // UserProfileModule,
+    // QuestionnaireModule,
+    // OpenFinanceModule,
+    // FinancialAnalysisModule,
+    // EventDetectionModule,
+    // RoadmapModule,
+    // GoalsModule,
+    // NotificationsModule,
+    // LlmOrchestratorModule,
   ],
 })
 export class AppModule {}

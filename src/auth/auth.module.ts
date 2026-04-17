@@ -2,11 +2,10 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthService } from './auth.service.js';
 import { AuthController } from './auth.controller.js';
 import { JwtStrategy } from './jwt.strategy.js';
-import { User } from '../database/entities/user.entity.js';
+import { InMemoryAuthUserStore } from './in-memory-auth-user.store.js';
 
 @Module({
   imports: [
@@ -19,10 +18,9 @@ import { User } from '../database/entities/user.entity.js';
         signOptions: { expiresIn: config.get<string>('JWT_EXPIRATION', '1d') as any },
       }),
     }),
-    TypeOrmModule.forFeature([User]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, InMemoryAuthUserStore],
   exports: [AuthService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}
