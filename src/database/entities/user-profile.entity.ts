@@ -21,7 +21,7 @@ export class UserProfile {
   @Column({ type: 'varchar', length: 100, nullable: true })
   occupation: string;
 
-  @OneToOne(() => User, (user) => user.profile)
+  @OneToOne(() => User, (user) => user.profile, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 }

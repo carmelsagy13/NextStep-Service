@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { GoalsService } from './goals.service.js';
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('Goals')
 @ApiBearerAuth()
@@ -12,16 +13,14 @@ export class GoalsController {
 
   @Get()
   @ApiOperation({ summary: 'Get all user goals with progress' })
-  getGoals() {
-    // TODO: extract userId from JWT
-    return this.goalsService.getGoals('placeholder-user-id');
+  getGoals(@CurrentUser() user: { userId: string }) {
+    return this.goalsService.getGoals(user.userId);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create a new goal' })
-  createGoal(@Body() body: any) {
-    // TODO: extract userId from JWT, add DTO
-    return this.goalsService.createGoal('placeholder-user-id', body);
+  createGoal(@CurrentUser() user: { userId: string }, @Body() body: any) {
+    return this.goalsService.createGoal(user.userId, body);
   }
 
   @Post('update')

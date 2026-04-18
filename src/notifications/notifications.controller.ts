@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { NotificationsService } from './notifications.service.js';
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -12,9 +13,8 @@ export class NotificationsController {
 
   @Get()
   @ApiOperation({ summary: 'Get all user notifications' })
-  getNotifications() {
-    // TODO: extract userId from JWT
-    return this.notificationsService.getNotifications('placeholder-user-id');
+  getNotifications(@CurrentUser() user: { userId: string }) {
+    return this.notificationsService.getNotifications(user.userId);
   }
 
   @Post('readNotifications')

@@ -21,7 +21,7 @@ export class UserGoal {
   @Column({ type: 'date', name: 'target_date', nullable: true })
   targetDate: Date;
 
-  @ManyToOne(() => User, (user) => user.goals)
+  @ManyToOne(() => User, (user) => user.goals, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 }

@@ -18,7 +18,7 @@ export class FinancialEvent {
   @Column({ type: 'timestamp', name: 'event_date' })
   eventDate: Date;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 }

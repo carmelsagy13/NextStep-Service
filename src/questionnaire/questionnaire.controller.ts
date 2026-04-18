@@ -2,6 +2,7 @@ import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { QuestionnaireService } from './questionnaire.service.js';
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('Questionnaire')
 @ApiBearerAuth()
@@ -12,8 +13,7 @@ export class QuestionnaireController {
 
   @Post()
   @ApiOperation({ summary: 'Submit onboarding questionnaire answers' })
-  submit(@Body() body: any) {
-    // TODO: implement DTO and storage
-    return this.questionnaireService.submit(body);
+  submit(@CurrentUser() user: { userId: string }, @Body() body: any) {
+    return this.questionnaireService.submit(user.userId, body);
   }
 }

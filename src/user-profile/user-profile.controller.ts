@@ -2,6 +2,7 @@ import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { UserProfileService } from './user-profile.service.js';
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('User Profile')
 @ApiBearerAuth()
@@ -12,8 +13,10 @@ export class UserProfileController {
 
   @Post('notificationPreferences')
   @ApiOperation({ summary: 'Save notification preferences' })
-  saveNotificationPreferences(@Body() body: any) {
-    // TODO: implement DTO and logic
-    return this.userProfileService.saveNotificationPreferences(body);
+  saveNotificationPreferences(
+    @CurrentUser() user: { userId: string },
+    @Body() body: any,
+  ) {
+    return this.userProfileService.saveNotificationPreferences(user.userId, body);
   }
 }

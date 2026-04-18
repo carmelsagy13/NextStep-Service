@@ -15,7 +15,7 @@ export class BankConsent {
   @Column({ type: 'timestamp', name: 'expiration_date', nullable: true })
   expirationDate: Date;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 }

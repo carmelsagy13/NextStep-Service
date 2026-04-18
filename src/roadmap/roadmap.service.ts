@@ -22,8 +22,13 @@ export class RoadmapService {
     return { state, steps };
   }
 
-  async updateRoadmap(userId: string, body: any) {
-    // TODO: update roadmap state in DB
-    return { message: 'Roadmap updated' };
+  async updateRoadmap(userId: string, body: { currentStepId?: number; progressPercent?: number }) {
+    let state = await this.stateRepo.findOne({ where: { userId } });
+    if (!state) {
+      state = this.stateRepo.create({ userId, progressPercent: 0, currentStepId: body.currentStepId ?? 1 });
+    }
+    if (body.currentStepId !== undefined) state.currentStepId = body.currentStepId;
+    if (body.progressPercent !== undefined) state.progressPercent = body.progressPercent;
+    return this.stateRepo.save(state);
   }
 }

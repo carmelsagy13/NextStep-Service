@@ -2,6 +2,7 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { FinancialAnalysisService } from './financial-analysis.service.js';
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('Financial Analysis')
 @ApiBearerAuth()
@@ -12,8 +13,7 @@ export class FinancialAnalysisController {
 
   @Get('snapshot')
   @ApiOperation({ summary: 'Get computed financial snapshot' })
-  getSnapshot() {
-    // TODO: extract userId from JWT
-    return this.financialAnalysisService.getSnapshot('placeholder-user-id');
+  getSnapshot(@CurrentUser() user: { userId: string }) {
+    return this.financialAnalysisService.getSnapshot(user.userId);
   }
 }
