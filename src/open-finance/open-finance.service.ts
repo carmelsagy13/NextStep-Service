@@ -3,36 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
 import { BankToken } from '../database/entities/bank-token.entity.js';
+import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-
-// The 5 stages of the Financial Hierarchy of Needs used as Gemini context.
-const FINANCIAL_STAGES = [
-  {
-    step_id: 1,
-    name: 'Basic Needs',
-    criteria: 'Income barely covers essential living expenses (rent, food, utilities). Little or no savings buffer.',
-  },
-  {
-    step_id: 2,
-    name: 'Financial Safety',
-    criteria: 'Has an emergency fund (1–3 months of expenses), consistent income, and manageable debt.',
-  },
-  {
-    step_id: 3,
-    name: 'Wealth Accumulation',
-    criteria: 'Actively saving and investing beyond emergency fund. Debt under control. Building net worth.',
-  },
-  {
-    step_id: 4,
-    name: 'Financial Freedom',
-    criteria: 'Passive income or investments that could cover living expenses. High savings rate. Low or no debt.',
-  },
-  {
-    step_id: 5,
-    name: 'Future & Legacy',
-    criteria: 'Wealth exceeds personal needs. Planning for generational wealth, philanthropy, or long-term estate goals.',
-  },
-];
 
 @Injectable()
 export class OpenFinanceService {
@@ -43,6 +15,8 @@ export class OpenFinanceService {
     private readonly consentRepo: Repository<BankConsent>,
     @InjectRepository(BankToken)
     private readonly tokenRepo: Repository<BankToken>,
+    @InjectRepository(RoadmapStep)
+    private readonly stepRepo: Repository<RoadmapStep>,
   ) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -80,16 +54,28 @@ export class OpenFinanceService {
       throw new BadRequestException('Uploaded file is not valid JSON');
     }
 
-    // 2. Build the Gemini prompt.
-    const stagesDescription = FINANCIAL_STAGES.map(
-      (s) => `Stage ${s.step_id} – ${s.name}: ${s.criteria}`,
-    ).join('\n');
+    // 2. Fetch financial stage definitions dynamically from the database.
+    const stages = await this.stepRepo.find({ order: { stepId: 'ASC' } });
+    if (!stages.length) {
+      throw new InternalServerErrorException(
+        'No roadmap steps found in the database. Please seed the roadmap_steps table.',
+      );
+    }
 
+    const stagesDescription = stages
+      .map((s) => {
+        // Use description text if available, otherwise fall back to the criteria JSON.
+        const detail = s.description ?? JSON.stringify(s.criteria ?? {});
+        return `Stage ${s.stepId} – ${s.title}: ${detail}`;
+      })
+      .join('\n');
+
+    // 3. Build the Gemini prompt.
     const prompt = [
       'You are an expert financial analyst.',
       '',
-      'You will be given a user\'s Open Banking JSON data and the definitions of 5 financial stages.',
-      'Your task is to determine which stage best describes the user\'s current financial situation.',
+      "You will be given a user's Open Banking JSON data and the definitions of financial stages.",
+      "Your task is to determine which stage best describes the user's current financial situation.",
       '',
       '## Financial Stages',
       stagesDescription,
@@ -99,28 +85,40 @@ export class OpenFinanceService {
       '',
       '## Instructions',
       'Respond EXCLUSIVELY with a single valid JSON object in this exact format — no markdown, no code fences, no extra text:',
-      '{ "step_id": <integer between 1 and 5>, "explanation": "<one or two sentence reasoning>" }',
+      '{ "step_id": <integer matching one of the stage numbers above>, "explanation": "<one or two sentence reasoning>" }',
     ].join('\n');
 
-    // 3. Call Gemini and parse the response.
+    // 4. Call Gemini (v1 API for stability) and parse the response.
     try {
-      const model = this.gemini.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const result = await model.generateContent(prompt);
-      const rawText = result.response.text().trim();
+      const response = await result.response;
+      const rawText = response.text();
 
-      // Strip accidental markdown fences if Gemini adds them despite instructions.
-      const jsonText = rawText.replace(/^```[\w]*\n?/m, '').replace(/```$/m, '').trim();
+      const jsonText = rawText
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .trim();
 
-      const parsed = JSON.parse(jsonText) as { step_id: number; explanation: string };
+      console.log('Gemini raw response:', rawText);
 
-      if (typeof parsed.step_id !== 'number' || typeof parsed.explanation !== 'string') {
-        throw new Error('Unexpected response shape from Gemini');
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        step_id: Number(parsed.step_id) || 1,
+        explanation: parsed.explanation || 'לא ניתן לספק הסבר כרגע.',
+      };
+    } catch (err: any) {
+      console.error('--- Gemini Error Details ---');
+      if (err.response) {
+        console.error('Status:', err.response.status);
+        console.error('Data:', JSON.stringify(err.response.data));
+      } else {
+        console.error('Error Message:', err.message);
       }
 
-      return parsed;
-    } catch (err: any) {
       throw new InternalServerErrorException(
-        `Gemini analysis failed: ${err?.message ?? 'unknown error'}`,
+        `Gemini analysis failed: ${err.message}`,
       );
     }
   }

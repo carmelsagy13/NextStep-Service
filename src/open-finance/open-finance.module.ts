@@ -6,10 +6,11 @@ import { OpenFinanceController } from './open-finance.controller.js';
 import { OpenFinanceService } from './open-finance.service.js';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
 import { BankToken } from '../database/entities/bank-token.entity.js';
+import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BankConsent, BankToken]),
+    TypeOrmModule.forFeature([BankConsent, BankToken, RoadmapStep]),
     // Store uploaded files in memory so we can access file.buffer in the service.
     MulterModule.register({ storage: memoryStorage() }),
   ],

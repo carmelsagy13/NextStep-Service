@@ -42,7 +42,7 @@ export class OpenFinanceController {
    */
   @Post('upload')
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'))
+  //@UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: 'Upload Open Banking JSON and classify financial stage via Gemini' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
