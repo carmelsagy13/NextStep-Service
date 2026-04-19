@@ -28,7 +28,7 @@ import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.modul
         password: config.get<string>('DB_PASSWORD'),
         database: config.get<string>('DB_NAME', 'next-step'),
         autoLoadEntities: true,
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
+        synchronize: true,
       }),
     }),
 
