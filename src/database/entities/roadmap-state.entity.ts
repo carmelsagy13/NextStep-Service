@@ -16,6 +16,9 @@ export class RoadmapState {
   @Column({ type: 'int', name: 'progress_percent', default: 0 })
   progressPercent: number;
 
+  @Column({ type: 'text', name: 'state_description', nullable: true })
+  stateDescription: string;
+
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;

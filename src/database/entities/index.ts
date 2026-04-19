@@ -10,3 +10,4 @@ export { RoadmapState } from './roadmap-state.entity.js';
 export { LlmGuidanceLog } from './llm-guidance-log.entity.js';
 export { NotificationTemplate } from './notification-template.entity.js';
 export { UserNotification } from './user-notification.entity.js';
+export { RoadmapGoal, RoadmapGoalType } from './roadmap-goal.entity.js';

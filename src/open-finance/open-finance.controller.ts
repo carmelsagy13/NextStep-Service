@@ -63,10 +63,16 @@ export class OpenFinanceController {
       },
     }),
   )
-  uploadAndAnalyze(@UploadedFile() file: Express.Multer.File) {
+  uploadAndAnalyze(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('userId') userId: string,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded — use field name \'file\'');
     }
-    return this.openFinanceService.analyzeFile(file.buffer);
+    if (!userId) {
+      throw new BadRequestException('userId query parameter is required');
+    }
+    return this.openFinanceService.analyzeFile(file.buffer, userId);
   }
 }
