@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { GoalsService } from './goals.service.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
+import { UpdateGoalDto } from './dto/update-goal.dto.js';
 
 @ApiTags('Goals')
 @ApiBearerAuth()
@@ -24,9 +25,9 @@ export class GoalsController {
   }
 
   @Post('update')
-  @ApiOperation({ summary: 'Update a goal by goalId' })
-  updateGoal(@Body() body: any) {
-    return this.goalsService.updateGoal(body);
+  @ApiOperation({ summary: 'Update currentAmount and/or isCompleted for a goal (optimistic UI support)' })
+  updateGoal(@CurrentUser() user: { userId: string }, @Body() dto: UpdateGoalDto) {
+    return this.goalsService.updateGoal(user.userId, dto);
   }
 
   @Post('delete')

@@ -4,6 +4,7 @@ import { UserGoal } from './user-goal.entity.js';
 export enum RoadmapGoalType {
   PERSONAL = 'personal',
   MARKETING = 'marketing',
+  BONUS = 'bonus',
 }
 
 @Entity('roadmap_goals')

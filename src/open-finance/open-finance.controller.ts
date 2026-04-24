@@ -7,6 +7,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { OpenFinanceService } from './open-finance.service.js';
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('Open Finance')
 @Controller('openfinance')
@@ -42,7 +43,7 @@ export class OpenFinanceController {
    */
   @Post('upload')
   @ApiBearerAuth()
-  //@UseGuards(AuthGuard('jwt'))
+  @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: 'Upload Open Banking JSON and classify financial stage via Gemini' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -65,14 +66,11 @@ export class OpenFinanceController {
   )
   uploadAndAnalyze(
     @UploadedFile() file: Express.Multer.File,
-    @Query('userId') userId: string,
+    @CurrentUser() user: { userId: string },
   ) {
     if (!file) {
       throw new BadRequestException('No file uploaded — use field name \'file\'');
     }
-    if (!userId) {
-      throw new BadRequestException('userId query parameter is required');
-    }
-    return this.openFinanceService.analyzeFile(file.buffer, userId);
+    return this.openFinanceService.analyzeFile(file.buffer, user.userId);
   }
 }
