@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { GoalsService } from './goals.service.js';
+import { StepIsolationGuard } from './guards/step-isolation.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
 
@@ -12,6 +13,16 @@ import { UpdateGoalDto } from './dto/update-goal.dto.js';
 export class GoalsController {
   constructor(private readonly goalsService: GoalsService) {}
 
+  @Get('recommended')
+  @ApiOperation({
+    summary: 'Get recommended roadmap goals for the user\'s current step',
+    description:
+      'Returns only roadmap_goals whose step_id exactly matches the user\'s current_step, sorted by priority ASC. Goals from other steps are never returned.',
+  })
+  getRecommendedGoals(@CurrentUser() user: { userId: string }) {
+    return this.goalsService.getRecommendedGoals(user.userId);
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get all user goals with progress' })
   getGoals(@CurrentUser() user: { userId: string }) {
@@ -19,7 +30,12 @@ export class GoalsController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create a new goal' })
+  @UseGuards(StepIsolationGuard)
+  @ApiOperation({
+    summary: 'Create a new goal',
+    description:
+      'If roadmapGoalId is provided, the referenced roadmap_goal must belong to the user\'s current step (enforced by StepIsolationGuard).',
+  })
   createGoal(@CurrentUser() user: { userId: string }, @Body() body: any) {
     return this.goalsService.createGoal(user.userId, body);
   }
