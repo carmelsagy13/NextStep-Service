@@ -111,6 +111,18 @@ export class OpenFinanceService {
       throw new BadRequestException('Uploaded file is not valid JSON');
     }
 
+    return this.analyzeBankingJson(bankingData, userId);
+  }
+
+  /**
+   * Normalization Bridge: takes already-parsed Open Banking JSON (from any source —
+   * file upload, Open Finance API, etc.), runs it through the LLM analyzer and
+   * persists the resulting roadmap state / user profile / user goals.
+   *
+   * This is the single entry point reused by both the file-upload flow and the
+   * Open Finance API integration so both paths produce identical DB writes.
+   */
+  async analyzeBankingJson(bankingData: unknown, userId: string): Promise<PersistAnalysisResult> {
     // 2. Fetch stage definitions and active goal templates from the DB in parallel.
     const [stages, goalTemplates] = await Promise.all([
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
@@ -205,7 +217,8 @@ export class OpenFinanceService {
       JSON.stringify(bankingData, null, 2),
       '',
       '## Response Format',
-      'Respond EXCLUSIVELY with a single valid JSON object — no markdown, no code fences, no extra text:',
+      'Respond EXCLUSIVELY with a single valid JSON object — no markdown, no code fences, no extra text.',
+      'Return ONLY a valid JSON object. Do not include any markdown formatting, backticks, or newlines outside the JSON structure. Ensure all Hebrew strings are properly escaped (use \\" for any embedded quote, never raw control characters). The response MUST parse with JSON.parse on the first try.',
       JSON.stringify(
         {
           roadmap_state: {
@@ -302,6 +315,8 @@ export class OpenFinanceService {
         model: this.groqModel,
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },
+        temperature: 0.2,
+        max_tokens: 2048,
       });
 
       const rawText = completion.choices[0]?.message?.content ?? '';
@@ -417,6 +432,18 @@ export class OpenFinanceService {
         : [];
 
       return { roadmap_state: savedState, user_goals: goalsWithRelation };
+    });
+  }
+
+  /**
+   * Deletes all financial profile and roadmap data for the given user
+   * within a single transaction. The User account itself is NOT touched.
+   */
+  async resetUserData(userId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(UserGoal, { userId });
+      await manager.delete(UserProfile, { userId });
+      await manager.delete(RoadmapState, { userId });
     });
   }
 }

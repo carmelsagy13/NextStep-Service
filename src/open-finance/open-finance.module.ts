@@ -4,6 +4,7 @@ import { MulterModule } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { OpenFinanceController } from './open-finance.controller.js';
 import { OpenFinanceService } from './open-finance.service.js';
+import { OpenFinanceApiService } from './open-finance-api.service.js';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
 import { BankToken } from '../database/entities/bank-token.entity.js';
 import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
@@ -17,7 +18,7 @@ import { UserProfile } from '../database/entities/user-profile.entity.js';
     MulterModule.register({ storage: memoryStorage() }),
   ],
   controllers: [OpenFinanceController],
-  providers: [OpenFinanceService],
-  exports: [OpenFinanceService],
+  providers: [OpenFinanceService, OpenFinanceApiService],
+  exports: [OpenFinanceService, OpenFinanceApiService],
 })
 export class OpenFinanceModule {}
