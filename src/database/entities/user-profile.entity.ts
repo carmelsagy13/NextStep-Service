@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToOne,
+  JoinColumn,
+} from 'typeorm';
 import { User } from './user.entity.js';
 
 @Entity('user_profiles')
@@ -42,10 +48,20 @@ export class UserProfile {
   @Column({ type: 'int', nullable: true })
   age: number;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'risk_tolerance' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'risk_tolerance',
+  })
   riskTolerance: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'knowledge_level' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'knowledge_level',
+  })
   knowledgeLevel: string;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
