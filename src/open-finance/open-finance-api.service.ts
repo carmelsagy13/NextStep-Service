@@ -347,7 +347,9 @@ export class OpenFinanceApiService {
           this.logger.log(`Job ${jobId} completed (status=${lastStatus})`);
           return data;
         }
-        this.logger.debug(`Job ${jobId} ${lastStatus} but report not ready yet`);
+        this.logger.debug(
+          `Job ${jobId} ${lastStatus} but report not ready yet`,
+        );
       } else if (lastStatus && isTerminalFailure(lastStatus)) {
         throw new BadGatewayException(
           `Open Finance job ended with status=${lastStatus}`,
