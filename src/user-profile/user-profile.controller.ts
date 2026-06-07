@@ -18,6 +18,20 @@ export class UserProfileController {
     return this.userProfileService.getProfile(user.userId);
   }
 
+  @Get('history')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Get the user\u2019s assessment history (abstracted level/criteria snapshots over time).' })
+  getHistory(@CurrentUser() user: { userId: string }) {
+    return this.userProfileService.getHistory(user.userId);
+  }
+
+  @Get('progress')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Get current pyramid level and progress delta vs the previous assessment.' })
+  getProgress(@CurrentUser() user: { userId: string }) {
+    return this.userProfileService.getProgress(user.userId);
+  }
+
   @Post('notificationPreferences')
   @ApiOperation({ summary: 'Save notification preferences' })
   saveNotificationPreferences(

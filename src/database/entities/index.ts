@@ -1,10 +1,11 @@
 export { User } from './user.entity.js';
 export { UserProfile } from './user-profile.entity.js';
+export { UserProfileHistory } from './user-profile-history.entity.js';
 export { BankConsent } from './bank-consent.entity.js';
 export { BankToken } from './bank-token.entity.js';
 export { FinancialSnapshot } from './financial-snapshot.entity.js';
 export { FinancialEvent } from './financial-event.entity.js';
-export { UserGoal } from './user-goal.entity.js';
+export { UserGoal, UserGoalStatus } from './user-goal.entity.js';
 export { RoadmapStep } from './roadmap-step.entity.js';
 export { RoadmapState } from './roadmap-state.entity.js';
 export { LlmGuidanceLog } from './llm-guidance-log.entity.js';

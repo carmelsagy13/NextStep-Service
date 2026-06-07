@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { GoalsService } from './goals.service.js';
 import { StepIsolationGuard } from './guards/step-isolation.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
+import { UserGoalStatus } from '../database/entities/user-goal.entity.js';
 
 @ApiTags('Goals')
 @ApiBearerAuth()
@@ -24,9 +25,13 @@ export class GoalsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all user goals with progress' })
-  getGoals(@CurrentUser() user: { userId: string }) {
-    return this.goalsService.getGoals(user.userId);
+  @ApiOperation({ summary: 'Get user goals with progress, optionally filtered by lifecycle status' })
+  @ApiQuery({ name: 'status', required: false, enum: UserGoalStatus })
+  getGoals(
+    @CurrentUser() user: { userId: string },
+    @Query('status') status?: UserGoalStatus,
+  ) {
+    return this.goalsService.getGoals(user.userId, status);
   }
 
   @Post()
@@ -41,7 +46,7 @@ export class GoalsController {
   }
 
   @Post('update')
-  @ApiOperation({ summary: 'Update currentAmount and/or isCompleted for a goal (optimistic UI support)' })
+  @ApiOperation({ summary: 'Update currentAmount and/or lifecycle status for a goal (optimistic UI support)' })
   updateGoal(@CurrentUser() user: { userId: string }, @Body() dto: UpdateGoalDto) {
     return this.goalsService.updateGoal(user.userId, dto);
   }
