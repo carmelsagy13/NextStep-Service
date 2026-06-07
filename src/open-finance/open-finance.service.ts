@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
@@ -6,7 +10,10 @@ import { BankToken } from '../database/entities/bank-token.entity.js';
 import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { RoadmapState } from '../database/entities/roadmap-state.entity.js';
-import { UserGoal, UserGoalStatus } from '../database/entities/user-goal.entity.js';
+import {
+  UserGoal,
+  UserGoalStatus,
+} from '../database/entities/user-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -112,7 +119,9 @@ export class OpenFinanceService {
   ) {
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
-      throw new InternalServerErrorException('GEMINI_API_KEY is not configured');
+      throw new InternalServerErrorException(
+        'GEMINI_API_KEY is not configured',
+      );
     }
     this.gemini = new GoogleGenerativeAI(geminiKey);
     this.geminiModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
@@ -144,7 +153,10 @@ export class OpenFinanceService {
    * Parses the uploaded Open Banking JSON, calls Gemini to classify the user's
    * financial state and select relevant tasks, then persists everything to the DB.
    */
-  async analyzeFile(fileBuffer: Buffer, userId: string): Promise<PersistAnalysisResult> {
+  async analyzeFile(
+    fileBuffer: Buffer,
+    userId: string,
+  ): Promise<PersistAnalysisResult> {
     // 1. Parse the uploaded JSON file.
     let bankingData: unknown;
     try {
@@ -164,7 +176,10 @@ export class OpenFinanceService {
    * This is the single entry point reused by both the file-upload flow and the
    * Open Finance API integration so both paths produce identical DB writes.
    */
-  async analyzeBankingJson(bankingData: unknown, userId: string): Promise<PersistAnalysisResult> {
+  async analyzeBankingJson(
+    bankingData: unknown,
+    userId: string,
+  ): Promise<PersistAnalysisResult> {
     // 1. Fetch stage definitions and active goal templates from the DB in parallel.
     const [stages, goalTemplates] = await Promise.all([
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
@@ -197,7 +212,9 @@ export class OpenFinanceService {
     //    and the new financial summary against the user's existing tasks, then
     //    decide which to keep / remove / reprioritize / complete / add (all by ID).
     const currentStep = roadmapState.current_step;
-    const filteredGoalTemplates = goalTemplates.filter((g) => g.stepId === currentStep);
+    const filteredGoalTemplates = goalTemplates.filter(
+      (g) => g.stepId === currentStep,
+    );
     const decision = await this.callGroqForReconciliation(
       summaryJson,
       currentStep,
@@ -206,7 +223,7 @@ export class OpenFinanceService {
     );
 
     // 5. Persist the reconciliation result (non-destructive) within a transaction.
-    return this.applyReconciliation({
+    const clientResponse = await this.applyReconciliation({
       userId,
       currentStep,
       roadmapState,
@@ -215,41 +232,64 @@ export class OpenFinanceService {
       goalTemplates,
       context,
     });
+
+    console.log(
+      '[AI] Response sent to client:',
+      JSON.stringify(clientResponse, null, 2),
+    );
+
+    return clientResponse;
   }
 
   // ─── TASK 1: Deterministic Data Aggregation ────────────────────────────────
 
   private preprocessBankingData(rawData: unknown): string {
-    if (rawData == null || (typeof rawData === 'object' && !Array.isArray(rawData) && Object.keys(rawData as object).length === 0)) {
+    if (
+      rawData == null ||
+      (typeof rawData === 'object' &&
+        !Array.isArray(rawData) &&
+        Object.keys(rawData as object).length === 0)
+    ) {
       return JSON.stringify({
-        metrics: { totalMonthlyIncome: 0, totalMonthlyExpenses: 0, currentBalance: 0 },
+        metrics: {
+          totalMonthlyIncome: 0,
+          totalMonthlyExpenses: 0,
+          currentBalance: 0,
+        },
         aggregatedCategories: [],
         highImpactTransactions: [],
       });
     }
 
     const data = rawData as Record<string, any>;
-    const transactions: Array<Record<string, any>> = Array.isArray(data.transactions)
+    const transactions: Array<Record<string, any>> = Array.isArray(
+      data.transactions,
+    )
       ? data.transactions
-      : Array.isArray(data) ? data as any[] : [];
+      : Array.isArray(data)
+        ? (data as any[])
+        : [];
 
     // Calculate financial metrics
     let totalMonthlyIncome = 0;
     let totalMonthlyExpenses = 0;
-    const currentBalance: number = typeof data.balance === 'number'
-      ? data.balance
-      : typeof data.currentBalance === 'number'
-        ? data.currentBalance
-        : 0;
+    const currentBalance: number =
+      typeof data.balance === 'number'
+        ? data.balance
+        : typeof data.currentBalance === 'number'
+          ? data.currentBalance
+          : 0;
 
-    const HIGH_IMPACT_KEYWORDS = /loan|הלוואה|mortgage|משכנתא|overdraft|מינוס|עמלה/i;
+    const HIGH_IMPACT_KEYWORDS =
+      /loan|הלוואה|mortgage|משכנתא|overdraft|מינוס|עמלה/i;
     const HIGH_AMOUNT_THRESHOLD = 1000;
 
     const highImpactTransactions: Array<Record<string, any>> = [];
     const categoryBuckets = new Map<string, { sum: number; count: number }>();
 
     for (const tx of transactions) {
-      const amount = typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
+      const amount =
+        typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
       const absAmount = Math.abs(amount);
       const description: string = tx.description ?? tx.memo ?? tx.name ?? '';
       const category: string = tx.category ?? tx.type ?? 'uncategorized';
@@ -263,7 +303,9 @@ export class OpenFinanceService {
 
       // High-impact retention: keep raw if amount > threshold or keyword match
       const isHighAmount = absAmount > HIGH_AMOUNT_THRESHOLD;
-      const isKeywordMatch = HIGH_IMPACT_KEYWORDS.test(description) || HIGH_IMPACT_KEYWORDS.test(category);
+      const isKeywordMatch =
+        HIGH_IMPACT_KEYWORDS.test(description) ||
+        HIGH_IMPACT_KEYWORDS.test(category);
 
       if (isHighAmount || isKeywordMatch) {
         highImpactTransactions.push(tx);
@@ -282,7 +324,9 @@ export class OpenFinanceService {
     // Format aggregated categories
     const aggregatedCategories: string[] = [];
     for (const [cat, { sum, count }] of categoryBuckets) {
-      aggregatedCategories.push(`${cat}: ${Math.round(sum)} ILS across ${count} transactions`);
+      aggregatedCategories.push(
+        `${cat}: ${Math.round(sum)} ILS across ${count} transactions`,
+      );
     }
 
     const summary = {
@@ -311,7 +355,9 @@ export class OpenFinanceService {
       .map((s) =>
         [
           `### Stage ${s.stepId} – ${s.title}`,
-          s.criteria ? JSON.stringify(s.criteria, null, 2) : '  (no criteria defined)',
+          s.criteria
+            ? JSON.stringify(s.criteria, null, 2)
+            : '  (no criteria defined)',
         ].join('\n'),
       )
       .join('\n\n');
@@ -349,7 +395,11 @@ export class OpenFinanceService {
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    const rawText = await this.executeGroqCall(systemPrompt, summaryJson, 'profile');
+    const rawText = await this.executeLlmCall(
+      systemPrompt,
+      summaryJson,
+      'profile',
+    );
     return this.parseGroqResponse<AiCriteriaProfile>(rawText, 'profile');
   }
 
@@ -381,8 +431,14 @@ export class OpenFinanceService {
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    const rawText = await this.executeGroqCall(systemPrompt, summaryJson, 'state');
-    const result = this.parseGroqResponse<GeminiAnalysisResult['roadmap_state']>(rawText, 'state');
+    const rawText = await this.executeLlmCall(
+      systemPrompt,
+      summaryJson,
+      'state',
+    );
+    const result = this.parseGroqResponse<
+      GeminiAnalysisResult['roadmap_state']
+    >(rawText, 'state');
     result.current_step = Number(result.current_step) || 1;
     result.progress_percentage = Number(result.progress_percentage) || 0;
     return result;
@@ -393,20 +449,27 @@ export class OpenFinanceService {
    * lifecycle states) and recent assessment history so the reconciliation LLM
    * call can reason about progression rather than recomputing from scratch.
    */
-  private async loadUserContext(userId: string): Promise<UserReconciliationContext> {
-    const [currentProfile, currentState, existingTasks, history] = await Promise.all([
-      this.dataSource.getRepository(UserProfile).findOne({ where: { userId } }),
-      this.dataSource.getRepository(RoadmapState).findOne({ where: { userId } }),
-      this.dataSource.getRepository(UserGoal).find({
-        where: { userId },
-        order: { priority: 'ASC' },
-      }),
-      this.historyRepo.find({
-        where: { userId },
-        order: { createdAt: 'DESC' },
-        take: 5,
-      }),
-    ]);
+  private async loadUserContext(
+    userId: string,
+  ): Promise<UserReconciliationContext> {
+    const [currentProfile, currentState, existingTasks, history] =
+      await Promise.all([
+        this.dataSource
+          .getRepository(UserProfile)
+          .findOne({ where: { userId } }),
+        this.dataSource
+          .getRepository(RoadmapState)
+          .findOne({ where: { userId } }),
+        this.dataSource.getRepository(UserGoal).find({
+          where: { userId },
+          order: { priority: 'ASC' },
+        }),
+        this.historyRepo.find({
+          where: { userId },
+          order: { createdAt: 'DESC' },
+          take: 5,
+        }),
+      ]);
 
     return { currentProfile, currentState, existingTasks, history };
   }
@@ -434,7 +497,9 @@ export class OpenFinanceService {
               `    type: ${g.type}`,
               `    title: "${g.title}"`,
               `    description_template: "${g.descriptionTemplate}"`,
-              g.requiredContext ? `    required_context: "${g.requiredContext}"` : null,
+              g.requiredContext
+                ? `    required_context: "${g.requiredContext}"`
+                : null,
               `    priority: ${g.priority}`,
             ]
               .filter(Boolean)
@@ -452,7 +517,9 @@ export class OpenFinanceService {
               `    status: ${t.status}`,
               `    priority: ${t.priority}`,
               `    progress: ${t.currentAmount ?? 0}/${t.targetAmount ?? 'n/a'}`,
-              t.roadmapGoalId ? `    roadmap_goal_id: "${t.roadmapGoalId}"` : null,
+              t.roadmapGoalId
+                ? `    roadmap_goal_id: "${t.roadmapGoalId}"`
+                : null,
             ]
               .filter(Boolean)
               .join('\n'),
@@ -505,9 +572,18 @@ export class OpenFinanceService {
       '## Required Output Schema (single JSON object):',
       JSON.stringify({
         task_reconciliation: {
-          keep: [{ user_goal_id: '<existing UUID>', new_priority: '<integer or omit>' }],
-          remove: [{ user_goal_id: '<existing UUID>', reason: '<Hebrew reason>' }],
-          reprioritize: [{ user_goal_id: '<existing UUID>', new_priority: '<integer>' }],
+          keep: [
+            {
+              user_goal_id: '<existing UUID>',
+              new_priority: '<integer or omit>',
+            },
+          ],
+          remove: [
+            { user_goal_id: '<existing UUID>', reason: '<Hebrew reason>' },
+          ],
+          reprioritize: [
+            { user_goal_id: '<existing UUID>', new_priority: '<integer>' },
+          ],
           complete: [{ user_goal_id: '<existing UUID>' }],
           add: [
             {
@@ -521,7 +597,8 @@ export class OpenFinanceService {
           ],
         },
         progress_assessment: {
-          meaningful_progress: '<boolean — has the user meaningfully progressed toward the next level>',
+          meaningful_progress:
+            '<boolean — has the user meaningfully progressed toward the next level>',
           summary: '<Hebrew summary of the change since the last assessment>',
         },
       }),
@@ -529,8 +606,15 @@ export class OpenFinanceService {
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    const rawText = await this.executeGroqCall(systemPrompt, summaryJson, 'reconciliation');
-    const parsed = this.parseGroqResponse<ReconciliationDecision>(rawText, 'reconciliation');
+    const rawText = await this.executeLlmCall(
+      systemPrompt,
+      summaryJson,
+      'reconciliation',
+    );
+    const parsed = this.parseGroqResponse<ReconciliationDecision>(
+      rawText,
+      'reconciliation',
+    );
     return this.normalizeReconciliationDecision(parsed);
   }
 
@@ -547,7 +631,9 @@ export class OpenFinanceService {
         add: arr(tr.add),
       },
       progress_assessment: {
-        meaningful_progress: Boolean(raw?.progress_assessment?.meaningful_progress),
+        meaningful_progress: Boolean(
+          raw?.progress_assessment?.meaningful_progress,
+        ),
         summary: raw?.progress_assessment?.summary ?? '',
       },
     };
@@ -555,7 +641,50 @@ export class OpenFinanceService {
 
   // ─── Shared Groq Execution & Validation Helpers ────────────────────────────
 
-  private async executeGroqCall(systemPrompt: string, userContent: string, label: string): Promise<string> {
+  private async executeLlmCall(
+    systemPrompt: string,
+    userContent: string,
+    label: string,
+  ): Promise<string> {
+    // Groq is opt-in via USE_GROQ=true; otherwise Gemini is used.
+    if (process.env.USE_GROQ === 'true') {
+      return this.executeGroqCall(systemPrompt, userContent, label);
+    }
+    return this.executeGeminiCall(systemPrompt, userContent, label);
+  }
+
+  private async executeGeminiCall(
+    systemPrompt: string,
+    userContent: string,
+    label: string,
+  ): Promise<string> {
+    try {
+      const model = this.gemini.getGenerativeModel({
+        model: this.geminiModel,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+      const result = await model.generateContent(
+        `${systemPrompt}\n\n${userContent}`,
+      );
+      const rawText = (await result.response).text();
+      console.log(`[AI] Gemini (${label}) raw response:`, rawText);
+      return rawText;
+    } catch (err: any) {
+      console.error(`--- Gemini (${label}) Error ---`, err.message);
+      throw new InternalServerErrorException(
+        `Gemini ${label} analysis failed: ${err.message}`,
+      );
+    }
+  }
+
+  private async executeGroqCall(
+    systemPrompt: string,
+    userContent: string,
+    label: string,
+  ): Promise<string> {
     try {
       const completion = await this.groq.chat.completions.create({
         model: this.groqModel,
@@ -573,7 +702,9 @@ export class OpenFinanceService {
       return rawText;
     } catch (err: any) {
       console.error(`--- Groq (${label}) Error ---`, err.message);
-      throw new InternalServerErrorException(`Groq ${label} analysis failed: ${err.message}`);
+      throw new InternalServerErrorException(
+        `Groq ${label} analysis failed: ${err.message}`,
+      );
     }
   }
 
@@ -591,20 +722,23 @@ export class OpenFinanceService {
     } catch (err: any) {
       throw new InternalServerErrorException(
         `Failed to parse Groq (${label}) response as JSON after sanitization. ` +
-        `Raw (first 500 chars): ${rawText.slice(0, 500)}`,
+          `Raw (first 500 chars): ${rawText.slice(0, 500)}`,
       );
     }
   }
 
   private sanitizeLlmJson(raw: string): string {
     // Strip markdown code fences: ```json ... ``` or ``` ... ```
-    let cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    let cleaned = raw
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '');
     // Remove any leading/trailing non-JSON characters (preamble/postscript)
     const firstBrace = cleaned.indexOf('{');
     const firstBracket = cleaned.indexOf('[');
-    const start = firstBrace >= 0 && (firstBracket < 0 || firstBrace < firstBracket)
-      ? firstBrace
-      : firstBracket;
+    const start =
+      firstBrace >= 0 && (firstBracket < 0 || firstBrace < firstBracket)
+        ? firstBrace
+        : firstBracket;
     if (start > 0) {
       cleaned = cleaned.slice(start);
     }
@@ -622,19 +756,19 @@ export class OpenFinanceService {
   private normalizeCriteriaProfile(raw: any): AiCriteriaProfile {
     const clamp = (v: any) => Math.min(5, Math.max(1, Number(v) || 1));
     return {
-      current_step:         clamp(raw?.current_step),
-      cash_flow:            clamp(raw?.cash_flow),
-      credit_consumption:   clamp(raw?.credit_consumption),
-      loans:                clamp(raw?.loans),
-      savings_investments:  clamp(raw?.savings_investments),
-      pension_long_term:    clamp(raw?.pension_long_term),
-      lifestyle_clubs:      clamp(raw?.lifestyle_clubs),
-      mortgage:             clamp(raw?.mortgage),
-      system_indicators:    clamp(raw?.system_indicators),
-      age:                  raw?.age != null ? (Number(raw.age) || null) : null,
-      risk_level:           raw?.risk_level ?? null,
-      knowledge_level:      raw?.knowledge_level ?? null,
-      occupation:           raw?.occupation ?? null,
+      current_step: clamp(raw?.current_step),
+      cash_flow: clamp(raw?.cash_flow),
+      credit_consumption: clamp(raw?.credit_consumption),
+      loans: clamp(raw?.loans),
+      savings_investments: clamp(raw?.savings_investments),
+      pension_long_term: clamp(raw?.pension_long_term),
+      lifestyle_clubs: clamp(raw?.lifestyle_clubs),
+      mortgage: clamp(raw?.mortgage),
+      system_indicators: clamp(raw?.system_indicators),
+      age: raw?.age != null ? Number(raw.age) || null : null,
+      risk_level: raw?.risk_level ?? null,
+      knowledge_level: raw?.knowledge_level ?? null,
+      occupation: raw?.occupation ?? null,
     };
   }
 
@@ -662,7 +796,9 @@ export class OpenFinanceService {
     const p = params.userProfile;
     const templateMap = new Map(params.goalTemplates.map((g) => [g.goalId, g]));
     const allowedAddIds = new Set(
-      params.goalTemplates.filter((g) => g.stepId === currentStep).map((g) => g.goalId),
+      params.goalTemplates
+        .filter((g) => g.stepId === currentStep)
+        .map((g) => g.goalId),
     );
 
     const priorStep = params.context.currentState?.currentStepId ?? null;
@@ -687,19 +823,20 @@ export class OpenFinanceService {
       if (!profile) {
         profile = manager.create(UserProfile, { userId });
       }
-      profile.currentStep        = p.current_step;
-      profile.cashFlow           = p.cash_flow;
-      profile.creditConsumption  = p.credit_consumption;
-      profile.loans              = p.loans;
+      profile.currentStep = p.current_step;
+      profile.cashFlow = p.cash_flow;
+      profile.creditConsumption = p.credit_consumption;
+      profile.loans = p.loans;
       profile.savingsInvestments = p.savings_investments;
-      profile.pensionLongTerm    = p.pension_long_term;
-      profile.lifestyleClubs     = p.lifestyle_clubs;
-      profile.mortgage           = p.mortgage;
-      profile.systemIndicators   = p.system_indicators;
-      if (p.age !== null)            profile.age            = p.age;
-      if (p.risk_level !== null)     profile.riskTolerance  = p.risk_level;
-      if (p.knowledge_level !== null) profile.knowledgeLevel = p.knowledge_level;
-      if (p.occupation !== null)     profile.occupation     = p.occupation;
+      profile.pensionLongTerm = p.pension_long_term;
+      profile.lifestyleClubs = p.lifestyle_clubs;
+      profile.mortgage = p.mortgage;
+      profile.systemIndicators = p.system_indicators;
+      if (p.age !== null) profile.age = p.age;
+      if (p.risk_level !== null) profile.riskTolerance = p.risk_level;
+      if (p.knowledge_level !== null)
+        profile.knowledgeLevel = p.knowledge_level;
+      if (p.occupation !== null) profile.occupation = p.occupation;
       await manager.save(UserProfile, profile);
 
       // --- Append immutable assessment history (abstracted, no raw financials) ---
@@ -717,7 +854,8 @@ export class OpenFinanceService {
         systemIndicators: p.system_indicators,
         previousStep: priorStep,
         stepChanged: priorStep != null && priorStep !== currentStep,
-        progressDelta: priorProgress != null ? newProgress - priorProgress : null,
+        progressDelta:
+          priorProgress != null ? newProgress - priorProgress : null,
         stateDescription: params.roadmapState.state_description,
         llmReasoning: decision.progress_assessment.summary,
       });
@@ -759,7 +897,10 @@ export class OpenFinanceService {
         ...decision.task_reconciliation.reprioritize,
         ...decision.task_reconciliation.keep
           .filter((k) => k.new_priority != null)
-          .map((k) => ({ user_goal_id: k.user_goal_id, new_priority: k.new_priority as number })),
+          .map((k) => ({
+            user_goal_id: k.user_goal_id,
+            new_priority: k.new_priority as number,
+          })),
       ];
       for (const rp of reprioritized) {
         const t = byId.get(rp.user_goal_id);

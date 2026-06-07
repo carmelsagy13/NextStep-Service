@@ -102,8 +102,11 @@ export class OpenFinanceApiService {
       userId,
     );
 
-    this.logger.log('connectAndAnalyze END — analysis complete');
-    return { stage: 'ANALYSIS_COMPLETE', analysis };
+    const result: ConnectApiResult = { stage: 'ANALYSIS_COMPLETE', analysis };
+    this.logger.log(
+      `connectAndAnalyze END — response to frontend: ${JSON.stringify(result)}`,
+    );
+    return result;
   }
 
   // -------------------- Authentication --------------------

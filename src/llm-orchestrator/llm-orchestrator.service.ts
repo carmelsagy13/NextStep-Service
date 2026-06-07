@@ -29,14 +29,24 @@ export class LlmOrchestratorService {
     private readonly logRepo: Repository<LlmGuidanceLog>,
   ) {
     const geminiKey = this.config.get<string>('GEMINI_API_KEY', '');
-    if (!geminiKey) throw new InternalServerErrorException('GEMINI_API_KEY is not configured');
+    if (!geminiKey)
+      throw new InternalServerErrorException(
+        'GEMINI_API_KEY is not configured',
+      );
     this.gemini = new GoogleGenerativeAI(geminiKey);
-    this.geminiModel = this.config.get<string>('GEMINI_MODEL', 'gemini-1.5-flash');
+    this.geminiModel = this.config.get<string>(
+      'GEMINI_MODEL',
+      'gemini-1.5-flash',
+    );
 
     const groqKey = this.config.get<string>('GROQ_API_KEY', '');
-    if (!groqKey) throw new InternalServerErrorException('GROQ_API_KEY is not configured');
+    if (!groqKey)
+      throw new InternalServerErrorException('GROQ_API_KEY is not configured');
     this.groq = new Groq({ apiKey: groqKey });
-    this.groqModel = this.config.get<string>('GROQ_MODEL', 'llama-3.3-70b-versatile');
+    this.groqModel = this.config.get<string>(
+      'GROQ_MODEL',
+      'llama-3.3-70b-versatile',
+    );
   }
 
   // ─── Step 1: Financial Classification ────────────────────────────────────
@@ -99,7 +109,9 @@ export class LlmOrchestratorService {
     const parsed = JSON.parse(raw);
     const step = Math.min(5, Math.max(1, Number(parsed.current_step) || 1));
 
-    console.error(`[LLM][Step1-Classify] userId=${profile.userId} → step=${step}`);
+    console.error(
+      `[LLM][Step1-Classify] userId=${profile.userId} → step=${step}`,
+    );
     return step;
   }
 
@@ -197,7 +209,9 @@ export class LlmOrchestratorService {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      throw new InternalServerErrorException('AI personalization returned invalid JSON');
+      throw new InternalServerErrorException(
+        'AI personalization returned invalid JSON',
+      );
     }
 
     const recommendations = Array.isArray(parsed?.recommendations)
@@ -208,7 +222,9 @@ export class LlmOrchestratorService {
 
     // Security hard-stop: strip any goal IDs the AI invented outside the filtered list
     const allowedIds = new Set(filteredGoals.map((g) => g.goalId));
-    const safe = recommendations.filter((r: any) => allowedIds.has(r.roadmap_goal_id));
+    const safe = recommendations.filter((r: any) =>
+      allowedIds.has(r.roadmap_goal_id),
+    );
 
     console.log(
       `[LLM][Step3-Personalize] userId=${profile.userId} filteredGoals=${filteredGoals.length} returned=${safe.length}`,
@@ -216,7 +232,10 @@ export class LlmOrchestratorService {
 
     return safe.map((r: any) => ({
       roadmap_goal_id: r.roadmap_goal_id,
-      title: r.title ?? filteredGoals.find((g) => g.goalId === r.roadmap_goal_id)?.title ?? '',
+      title:
+        r.title ??
+        filteredGoals.find((g) => g.goalId === r.roadmap_goal_id)?.title ??
+        '',
       priority: Number(r.priority) || 0,
       ai_insight: r.ai_insight ?? '',
       dynamic_params: r.dynamic_params ?? {},
@@ -236,14 +255,20 @@ export class LlmOrchestratorService {
       console.log('Gemini raw prompt: ```\n' + prompt + '\n```');
       const result = await model.generateContent(prompt);
       const text = (await result.response).text();
-      return text.replace(/```json/gi, '').replace(/```/g, '').trim();
+      return text
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
     } catch (err: any) {
       const status: number | undefined = err?.status ?? err?.response?.status;
-      if (status === 503 || status === 429) {
+      const groqEnabled = this.config.get<string>('USE_GROQ') === 'true';
+      if (groqEnabled && (status === 503 || status === 429)) {
         console.warn(`[LLM] Gemini ${status} — falling back to Groq`);
         return this.callGroq(prompt);
       }
-      throw new InternalServerErrorException(`Gemini call failed: ${err.message}`);
+      throw new InternalServerErrorException(
+        `Gemini call failed: ${err.message}`,
+      );
     }
   }
 
@@ -257,7 +282,9 @@ export class LlmOrchestratorService {
       const content = completion.choices[0]?.message?.content ?? '{}';
       return content;
     } catch (err: any) {
-      throw new InternalServerErrorException(`Groq call failed: ${err.message}`);
+      throw new InternalServerErrorException(
+        `Groq call failed: ${err.message}`,
+      );
     }
   }
 
@@ -269,7 +296,11 @@ export class LlmOrchestratorService {
   ) {
     const guidanceText =
       'Use GET /goals/recommended for AI-powered step-isolated recommendations.';
-    const log = this.logRepo.create({ userId, contextSnapshot: context, guidanceText });
+    const log = this.logRepo.create({
+      userId,
+      contextSnapshot: context,
+      guidanceText,
+    });
     await this.logRepo.save(log);
     return { stage: 1, recommendation: guidanceText, suggestedGoals: [] };
   }
