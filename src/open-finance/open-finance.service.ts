@@ -1,13 +1,14 @@
 import { Injectable, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
 import { BankToken } from '../database/entities/bank-token.entity.js';
 import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { RoadmapState } from '../database/entities/roadmap-state.entity.js';
-import { UserGoal } from '../database/entities/user-goal.entity.js';
+import { UserGoal, UserGoalStatus } from '../database/entities/user-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
+import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Groq from 'groq-sdk';
 
@@ -50,6 +51,45 @@ export interface PersistAnalysisResult {
   user_goals: UserGoal[];
 }
 
+/**
+ * State-aware snapshot loaded BEFORE a reconciliation run. Lets the LLM compare
+ * new financial information against the user's existing profile and task history
+ * instead of recalculating from scratch.
+ */
+export interface UserReconciliationContext {
+  currentProfile: UserProfile | null;
+  currentState: RoadmapState | null;
+  existingTasks: UserGoal[];
+  history: UserProfileHistory[];
+}
+
+/**
+ * The diff the LLM returns during a state-aware reassessment. Every task is
+ * referenced by ID — existing tasks by `user_goal_id`, new tasks by
+ * `roadmap_goal_id` — so task identity is preserved across reassessments and
+ * no duplicate instances are created.
+ */
+export interface ReconciliationDecision {
+  task_reconciliation: {
+    keep: Array<{ user_goal_id: string; new_priority?: number }>;
+    remove: Array<{ user_goal_id: string; reason: string }>;
+    reprioritize: Array<{ user_goal_id: string; new_priority: number }>;
+    complete: Array<{ user_goal_id: string }>;
+    add: Array<{
+      roadmap_goal_id: string;
+      target_amount: number | null;
+      target_date: string | null;
+      dynamic_params: Record<string, unknown>;
+      ai_insight: string;
+      priority: number;
+    }>;
+  };
+  progress_assessment: {
+    meaningful_progress: boolean;
+    summary: string;
+  };
+}
+
 @Injectable()
 export class OpenFinanceService {
   private readonly gemini: GoogleGenerativeAI;
@@ -66,6 +106,8 @@ export class OpenFinanceService {
     private readonly stepRepo: Repository<RoadmapStep>,
     @InjectRepository(RoadmapGoal)
     private readonly roadmapGoalRepo: Repository<RoadmapGoal>,
+    @InjectRepository(UserProfileHistory)
+    private readonly historyRepo: Repository<UserProfileHistory>,
     private readonly dataSource: DataSource,
   ) {
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -123,7 +165,7 @@ export class OpenFinanceService {
    * Open Finance API integration so both paths produce identical DB writes.
    */
   async analyzeBankingJson(bankingData: unknown, userId: string): Promise<PersistAnalysisResult> {
-    // 2. Fetch stage definitions and active goal templates from the DB in parallel.
+    // 1. Fetch stage definitions and active goal templates from the DB in parallel.
     const [stages, goalTemplates] = await Promise.all([
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
       this.roadmapGoalRepo.find({
@@ -138,7 +180,183 @@ export class OpenFinanceService {
       );
     }
 
-    // 3. Build human-readable descriptions of each stage (used for overall roadmap classification).
+    // 2. Deterministic preprocessing — token diet.
+    const summaryJson = this.preprocessBankingData(bankingData);
+
+    // 2b. Load the user's existing state & task history so the LLM can reason
+    //     about progression instead of recalculating from scratch.
+    const context = await this.loadUserContext(userId);
+
+    // 3. Wave 1 — parallel: profile classification + roadmap state determination.
+    const [userProfile, roadmapState] = await Promise.all([
+      this.callGroqForProfile(summaryJson, stages),
+      this.callGroqForState(summaryJson, stages),
+    ]);
+
+    // 4. Wave 2 — state-aware reconciliation: compare the freshly-determined step
+    //    and the new financial summary against the user's existing tasks, then
+    //    decide which to keep / remove / reprioritize / complete / add (all by ID).
+    const currentStep = roadmapState.current_step;
+    const filteredGoalTemplates = goalTemplates.filter((g) => g.stepId === currentStep);
+    const decision = await this.callGroqForReconciliation(
+      summaryJson,
+      currentStep,
+      filteredGoalTemplates,
+      context,
+    );
+
+    // 5. Persist the reconciliation result (non-destructive) within a transaction.
+    return this.applyReconciliation({
+      userId,
+      currentStep,
+      roadmapState,
+      userProfile: this.normalizeCriteriaProfile(userProfile),
+      decision,
+      goalTemplates,
+      context,
+    });
+  }
+
+  // ─── TASK 1: Deterministic Data Aggregation ────────────────────────────────
+
+  private preprocessBankingData(rawData: unknown): string {
+    if (rawData == null || (typeof rawData === 'object' && !Array.isArray(rawData) && Object.keys(rawData as object).length === 0)) {
+      return JSON.stringify({
+        metrics: { totalMonthlyIncome: 0, totalMonthlyExpenses: 0, currentBalance: 0 },
+        aggregatedCategories: [],
+        highImpactTransactions: [],
+      });
+    }
+
+    const data = rawData as Record<string, any>;
+    const transactions: Array<Record<string, any>> = Array.isArray(data.transactions)
+      ? data.transactions
+      : Array.isArray(data) ? data as any[] : [];
+
+    // Calculate financial metrics
+    let totalMonthlyIncome = 0;
+    let totalMonthlyExpenses = 0;
+    const currentBalance: number = typeof data.balance === 'number'
+      ? data.balance
+      : typeof data.currentBalance === 'number'
+        ? data.currentBalance
+        : 0;
+
+    const HIGH_IMPACT_KEYWORDS = /loan|הלוואה|mortgage|משכנתא|overdraft|מינוס|עמלה/i;
+    const HIGH_AMOUNT_THRESHOLD = 1000;
+
+    const highImpactTransactions: Array<Record<string, any>> = [];
+    const categoryBuckets = new Map<string, { sum: number; count: number }>();
+
+    for (const tx of transactions) {
+      const amount = typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
+      const absAmount = Math.abs(amount);
+      const description: string = tx.description ?? tx.memo ?? tx.name ?? '';
+      const category: string = tx.category ?? tx.type ?? 'uncategorized';
+
+      // Income vs Expense classification
+      if (amount > 0) {
+        totalMonthlyIncome += amount;
+      } else {
+        totalMonthlyExpenses += absAmount;
+      }
+
+      // High-impact retention: keep raw if amount > threshold or keyword match
+      const isHighAmount = absAmount > HIGH_AMOUNT_THRESHOLD;
+      const isKeywordMatch = HIGH_IMPACT_KEYWORDS.test(description) || HIGH_IMPACT_KEYWORDS.test(category);
+
+      if (isHighAmount || isKeywordMatch) {
+        highImpactTransactions.push(tx);
+      } else {
+        // Aggregate low-value transactions by category
+        const bucket = categoryBuckets.get(category);
+        if (bucket) {
+          bucket.sum += absAmount;
+          bucket.count += 1;
+        } else {
+          categoryBuckets.set(category, { sum: absAmount, count: 1 });
+        }
+      }
+    }
+
+    // Format aggregated categories
+    const aggregatedCategories: string[] = [];
+    for (const [cat, { sum, count }] of categoryBuckets) {
+      aggregatedCategories.push(`${cat}: ${Math.round(sum)} ILS across ${count} transactions`);
+    }
+
+    const summary = {
+      metrics: {
+        totalMonthlyIncome: Math.round(totalMonthlyIncome),
+        totalMonthlyExpenses: Math.round(totalMonthlyExpenses),
+        currentBalance: Math.round(currentBalance),
+      },
+      aggregatedCategories,
+      highImpactTransactions,
+    };
+
+    return JSON.stringify(summary);
+  }
+
+  // ─── TASK 2 & 3: 2-Wave Groq Pipeline with Validation ─────────────────────
+
+  private static readonly STRICT_JSON_SUFFIX =
+    'IMPORTANT: Return raw JSON only. Do NOT wrap output in markdown code blocks (```json ... ```), do NOT output preamble or postscript text. Ensure all Hebrew text strings are cleanly escaped as valid UTF-8.';
+
+  private async callGroqForProfile(
+    summaryJson: string,
+    stages: RoadmapStep[],
+  ): Promise<AiCriteriaProfile> {
+    const criteriaByStageSection = stages
+      .map((s) =>
+        [
+          `### Stage ${s.stepId} – ${s.title}`,
+          s.criteria ? JSON.stringify(s.criteria, null, 2) : '  (no criteria defined)',
+        ].join('\n'),
+      )
+      .join('\n\n');
+
+    const systemPrompt = [
+      'You are an expert Israeli financial analyst.',
+      'Evaluate the user financial summary below and return a JSON object representing their profile.',
+      '',
+      '## 8 Granular Financial Criteria — Stage Definitions',
+      criteriaByStageSection,
+      '',
+      '## Demographic Extraction',
+      '- age: integer (null if not determinable)',
+      '- occupation: string in Hebrew (null if not determinable)',
+      '- risk_level: one of "low" | "medium" | "high"',
+      '- knowledge_level: one of "beginner" | "intermediate" | "advanced"',
+      '',
+      '## Required Output Schema (flat JSON object):',
+      JSON.stringify({
+        current_step: '<integer 1–5, weighted synthesis>',
+        cash_flow: '<integer 1–5>',
+        credit_consumption: '<integer 1–5>',
+        loans: '<integer 1–5>',
+        savings_investments: '<integer 1–5>',
+        pension_long_term: '<integer 1–5>',
+        lifestyle_clubs: '<integer 1–5>',
+        mortgage: '<integer 1–5>',
+        system_indicators: '<integer 1–5>',
+        age: '<integer or null>',
+        risk_level: '<string or null>',
+        knowledge_level: '<string or null>',
+        occupation: '<Hebrew string or null>',
+      }),
+      '',
+      OpenFinanceService.STRICT_JSON_SUFFIX,
+    ].join('\n');
+
+    const rawText = await this.executeGroqCall(systemPrompt, summaryJson, 'profile');
+    return this.parseGroqResponse<AiCriteriaProfile>(rawText, 'profile');
+  }
+
+  private async callGroqForState(
+    summaryJson: string,
+    stages: RoadmapStep[],
+  ): Promise<GeminiAnalysisResult['roadmap_state']> {
     const stagesSection = stages
       .map((s) => {
         const detail = s.description ?? JSON.stringify(s.criteria ?? {});
@@ -146,192 +364,258 @@ export class OpenFinanceService {
       })
       .join('\n');
 
-    // 3b. Build the dynamic criteria section from the DB — one block per stage.
-    const criteriaByStageSection = stages
-      .map((s) =>
-        [
-          `### Stage ${s.stepId} – ${s.title}`,
-          s.criteria
-            ? JSON.stringify(s.criteria, null, 2)
-            : '  (no criteria defined for this stage)',
-        ].join('\n'),
-      )
-      .join('\n\n');
-
-    // 4. Build the task-bank section, embedding the DB UUID so Gemini can echo it back.
-    const taskBankSection = goalTemplates
-      .map((g) =>
-        [
-          `  - roadmap_goal_id: "${g.goalId}"`,
-          `    step_id: ${g.stepId}`,
-          `    type: ${g.type}`,
-          `    title: "${g.title}"`,
-          `    description_template: "${g.descriptionTemplate}"`,
-          g.requiredContext ? `    required_context: "${g.requiredContext}"` : null,
-          `    priority: ${g.priority}`,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      )
-      .join('\n\n');
-
-    // 5. Build the full structured prompt.
-    const prompt = [
-      'You are an expert Israeli financial analyst. All textual output (state_description, ai_insight) MUST be written in Hebrew.',
+    const systemPrompt = [
+      'You are an expert Israeli financial analyst. All textual output MUST be in Hebrew.',
+      'Determine which of the 5 financial stages the user is currently in based on their summary.',
       '',
-      '## Task',
-      "Analyze the user's Open Banking data below and produce THREE things:",
-      '1. Determine the user\'s current Roadmap State (which of the 5 stages they are in and their progress %).',
-      '2. Evaluate the user\'s financial status (a stage from 1 to 5) for each of the 8 granular criteria defined below.',
-      '   Also extract demographic context: age, occupation, risk tolerance, and financial knowledge level.',
-      '3. From the provided Task Bank, select ONLY the goals that are relevant to this specific user based on their data.',
-      '   - For each selected goal, populate dynamic_params with actual values derived from the user data.',
-      '   - Fill in target_amount, current_amount, and target_date where applicable (use null if not determinable).',
-      '   - Provide a short Hebrew justification in ai_insight.',
-      '   - EXCLUDE goals that are not applicable to the user.',
-      '',
-      '## Financial Stage Definitions (apply to both overall roadmap_state and each criterion)',
+      '## Financial Stage Definitions',
       stagesSection,
       '',
-      '## 8 Granular Financial Criteria — Stage Definitions from Database',
-      '  Below are the exact stage definitions (from our system) for all 5 stages across 8 financial categories.',
-      '  For each category (cash_flow, credit_consumption, loans, savings_investments, pension_long_term,',
-      '  lifestyle_clubs, mortgage, system_indicators), determine which stage (1–5) best matches the user\'s',
-      '  behavior based on the financial_indicators defined for each stage.',
+      '## Required Output Schema (flat JSON object):',
+      JSON.stringify({
+        current_step: '<integer 1–5>',
+        progress_percentage: '<integer 0–100>',
+        state_description: '<Hebrew string describing current state>',
+      }),
       '',
-      criteriaByStageSection,
+      OpenFinanceService.STRICT_JSON_SUFFIX,
+    ].join('\n');
+
+    const rawText = await this.executeGroqCall(systemPrompt, summaryJson, 'state');
+    const result = this.parseGroqResponse<GeminiAnalysisResult['roadmap_state']>(rawText, 'state');
+    result.current_step = Number(result.current_step) || 1;
+    result.progress_percentage = Number(result.progress_percentage) || 0;
+    return result;
+  }
+
+  /**
+   * Loads the user's current profile, roadmap state, existing tasks (all
+   * lifecycle states) and recent assessment history so the reconciliation LLM
+   * call can reason about progression rather than recomputing from scratch.
+   */
+  private async loadUserContext(userId: string): Promise<UserReconciliationContext> {
+    const [currentProfile, currentState, existingTasks, history] = await Promise.all([
+      this.dataSource.getRepository(UserProfile).findOne({ where: { userId } }),
+      this.dataSource.getRepository(RoadmapState).findOne({ where: { userId } }),
+      this.dataSource.getRepository(UserGoal).find({
+        where: { userId },
+        order: { priority: 'ASC' },
+      }),
+      this.historyRepo.find({
+        where: { userId },
+        order: { createdAt: 'DESC' },
+        take: 5,
+      }),
+    ]);
+
+    return { currentProfile, currentState, existingTasks, history };
+  }
+
+  /**
+   * State-aware reconciliation (Wave 2). Cross-references the new financial
+   * summary AND the user's existing tasks/history with the available goal
+   * templates for the determined step, then returns an ID-based diff:
+   * which tasks to keep, remove, reprioritize, complete and which to add.
+   *
+   * Privacy: only abstracted prior assessments (criteria scores / step /
+   * progress) are sent as history — never previously-stored raw financials.
+   */
+  private async callGroqForReconciliation(
+    summaryJson: string,
+    currentStep: number,
+    filteredGoalTemplates: RoadmapGoal[],
+    context: UserReconciliationContext,
+  ): Promise<ReconciliationDecision> {
+    const taskBankSection = filteredGoalTemplates.length
+      ? filteredGoalTemplates
+          .map((g) =>
+            [
+              `  - roadmap_goal_id: "${g.goalId}"`,
+              `    type: ${g.type}`,
+              `    title: "${g.title}"`,
+              `    description_template: "${g.descriptionTemplate}"`,
+              g.requiredContext ? `    required_context: "${g.requiredContext}"` : null,
+              `    priority: ${g.priority}`,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          )
+          .join('\n\n')
+      : '  (no goal templates available for this step)';
+
+    const existingTasksSection = context.existingTasks.length
+      ? context.existingTasks
+          .map((t) =>
+            [
+              `  - user_goal_id: "${t.goalId}"`,
+              `    title: "${t.goalName}"`,
+              `    status: ${t.status}`,
+              `    priority: ${t.priority}`,
+              `    progress: ${t.currentAmount ?? 0}/${t.targetAmount ?? 'n/a'}`,
+              t.roadmapGoalId ? `    roadmap_goal_id: "${t.roadmapGoalId}"` : null,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          )
+          .join('\n\n')
+      : '  (user has no existing tasks — this is a first assessment)';
+
+    const priorStep = context.currentState?.currentStepId ?? null;
+    const priorProgress = context.currentState?.progressPercent ?? null;
+
+    const historySection = context.history.length
+      ? context.history
+          .map(
+            (h) =>
+              `  - ${h.createdAt instanceof Date ? h.createdAt.toISOString() : h.createdAt}: step ${h.step}, progress ${h.progressPercent}%, ` +
+              `criteria {cash_flow:${h.cashFlow}, credit:${h.creditConsumption}, loans:${h.loans}, savings:${h.savingsInvestments}, pension:${h.pensionLongTerm}, lifestyle:${h.lifestyleClubs}, mortgage:${h.mortgage}, system:${h.systemIndicators}}`,
+          )
+          .join('\n')
+      : '  (no prior assessments)';
+
+    const systemPrompt = [
+      'You are an expert Israeli financial analyst running a STATEFUL reassessment.',
+      'All ai_insight and summary text MUST be in Hebrew.',
       '',
-      '  The overall current_step in both roadmap_state and user_profile must be a weighted synthesis of these 8 criteria.',
+      'The user already has a profile, a pyramid level and a set of tasks. Do NOT',
+      'rebuild from scratch. Compare the NEW financial summary against the existing',
+      'tasks and history, then return an ID-based reconciliation diff.',
       '',
-      '## Demographic Extraction',
-      '  From the banking data, infer:',
-      '  - age: integer (null if not determinable)',
-      '  - occupation: string in Hebrew (null if not determinable)',
-      '  - risk_level: one of "low" | "medium" | "high" based on observed investment/spending behaviour',
-      '  - knowledge_level: one of "beginner" | "intermediate" | "advanced" based on product complexity held',
+      '## Rules',
+      '- Reference existing tasks ONLY by their user_goal_id.',
+      '- Reference new tasks ONLY by a roadmap_goal_id taken from the Available Goal Templates.',
+      '- NEVER invent IDs. NEVER duplicate an existing task: if a relevant goal template',
+      '  is already present among the existing tasks, KEEP or REPRIORITIZE it instead of adding it.',
+      '- Put tasks that are no longer relevant (e.g. left over from a previous step) into "remove".',
+      '- Put tasks the data shows are achieved into "complete".',
+      '- Only "add" templates that are genuinely relevant and not already assigned.',
       '',
-      '## Task Bank (active goal templates)',
-      taskBankSection || '  (no active goal templates found)',
+      `## User's Current Pyramid Level: ${priorStep ?? 'unknown'} (progress ${priorProgress ?? 0}%)`,
+      `## Newly Determined Level From New Data: ${currentStep}`,
       '',
-      '## User Open Banking Data',
-      JSON.stringify(bankingData, null, 2),
+      '## Previous Assessments (abstracted — no raw financial data)',
+      historySection,
       '',
-      '## Response Format',
-      'Respond EXCLUSIVELY with a single valid JSON object — no markdown, no code fences, no extra text.',
-      'Return ONLY a valid JSON object. Do not include any markdown formatting, backticks, or newlines outside the JSON structure. Ensure all Hebrew strings are properly escaped (use \\" for any embedded quote, never raw control characters). The response MUST parse with JSON.parse on the first try.',
-      JSON.stringify(
-        {
-          roadmap_state: {
-            current_step: '<integer 1–5>',
-            progress_percentage: '<integer 0–100>',
-            state_description: '<Hebrew string>',
-          },
-          user_profile: {
-            current_step: '<integer 1–5, weighted synthesis of 8 criteria>',
-            cash_flow: '<integer 1–5>',
-            credit_consumption: '<integer 1–5>',
-            loans: '<integer 1–5>',
-            savings_investments: '<integer 1–5>',
-            pension_long_term: '<integer 1–5>',
-            lifestyle_clubs: '<integer 1–5>',
-            mortgage: '<integer 1–5>',
-            system_indicators: '<integer 1–5>',
-            age: '<integer or null>',
-            risk_level: '<"low" | "medium" | "high" or null>',
-            knowledge_level: '<"beginner" | "intermediate" | "advanced" or null>',
-            occupation: '<Hebrew string or null>',
-          },
-          selected_tasks: [
+      '## Existing Tasks',
+      existingTasksSection,
+      '',
+      `## Available Goal Templates (task bank for step ${currentStep})`,
+      taskBankSection,
+      '',
+      '## Required Output Schema (single JSON object):',
+      JSON.stringify({
+        task_reconciliation: {
+          keep: [{ user_goal_id: '<existing UUID>', new_priority: '<integer or omit>' }],
+          remove: [{ user_goal_id: '<existing UUID>', reason: '<Hebrew reason>' }],
+          reprioritize: [{ user_goal_id: '<existing UUID>', new_priority: '<integer>' }],
+          complete: [{ user_goal_id: '<existing UUID>' }],
+          add: [
             {
               roadmap_goal_id: '<UUID from task bank>',
               target_amount: '<number or null>',
-              current_amount: '<number>',
               target_date: '<ISO-8601 string or null>',
-              is_completed: false,
               dynamic_params: { key: 'value' },
               ai_insight: '<Hebrew justification>',
+              priority: '<integer>',
             },
           ],
         },
-        null,
-        2,
-      ),
+        progress_assessment: {
+          meaningful_progress: '<boolean — has the user meaningfully progressed toward the next level>',
+          summary: '<Hebrew summary of the change since the last assessment>',
+        },
+      }),
+      '',
+      OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    // 6. Call the AI provider and parse the structured response.
-    const useBackup = process.env.USE_BACKUP_AI === 'true';
-    let geminiResult: GeminiAnalysisResult;
-
-    if (useBackup) {
-      console.log(`[AI] USE_BACKUP_AI=true — using Groq (${this.groqModel}) as primary provider`);
-      geminiResult = await this.callGroq(prompt);
-    } else {
-      try {
-        const model = this.gemini.getGenerativeModel({ model: this.geminiModel });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const rawText = response.text();
-
-        console.log('Gemini raw response:', rawText);
-
-        const jsonText = rawText
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
-
-        geminiResult = JSON.parse(jsonText);
-        geminiResult.roadmap_state.current_step = Number(geminiResult.roadmap_state.current_step) || 1;
-        geminiResult.roadmap_state.progress_percentage = Number(geminiResult.roadmap_state.progress_percentage) || 0;
-        geminiResult.user_profile = this.normalizeCriteriaProfile(geminiResult.user_profile);
-      } catch (err: any) {
-        const status: number | undefined = err?.status ?? err?.response?.status;
-        const isRetryable = status === 503 || status === 429;
-
-        if (isRetryable) {
-          console.warn(
-            `[AI] Gemini returned ${status} — falling back to Groq (${this.groqModel})`,  
-          );
-          geminiResult = await this.callGroq(prompt);
-        } else {
-          console.error('--- Gemini Error Details ---');
-          if (err.response) {
-            console.error('Status:', err.response.status);
-            console.error('Data:', JSON.stringify(err.response.data));
-          } else {
-            console.error('Error Message:', err.message);
-          }
-          throw new InternalServerErrorException(`Gemini analysis failed: ${err.message}`);
-        }
-      }
-    }
-
-    // 7. Persist the result to the database within a single transaction.
-    return this.persistAnalysisResult(geminiResult, userId, goalTemplates);
+    const rawText = await this.executeGroqCall(systemPrompt, summaryJson, 'reconciliation');
+    const parsed = this.parseGroqResponse<ReconciliationDecision>(rawText, 'reconciliation');
+    return this.normalizeReconciliationDecision(parsed);
   }
 
-  private async callGroq(prompt: string): Promise<GeminiAnalysisResult> {
+  /** Defensive normalization so missing arrays never crash the apply step. */
+  private normalizeReconciliationDecision(raw: any): ReconciliationDecision {
+    const tr = raw?.task_reconciliation ?? {};
+    const arr = (v: any) => (Array.isArray(v) ? v : []);
+    return {
+      task_reconciliation: {
+        keep: arr(tr.keep),
+        remove: arr(tr.remove),
+        reprioritize: arr(tr.reprioritize),
+        complete: arr(tr.complete),
+        add: arr(tr.add),
+      },
+      progress_assessment: {
+        meaningful_progress: Boolean(raw?.progress_assessment?.meaningful_progress),
+        summary: raw?.progress_assessment?.summary ?? '',
+      },
+    };
+  }
+
+  // ─── Shared Groq Execution & Validation Helpers ────────────────────────────
+
+  private async executeGroqCall(systemPrompt: string, userContent: string, label: string): Promise<string> {
     try {
       const completion = await this.groq.chat.completions.create({
         model: this.groqModel,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
         response_format: { type: 'json_object' },
-        temperature: 0.2,
-        max_tokens: 2048,
+        temperature: 0.1,
+        max_tokens: 3000,
       });
 
       const rawText = completion.choices[0]?.message?.content ?? '';
-      console.log('[AI] Groq raw response:', rawText);
-
-      const result: GeminiAnalysisResult = JSON.parse(rawText);
-      result.roadmap_state.current_step = Number(result.roadmap_state.current_step) || 1;
-      result.roadmap_state.progress_percentage = Number(result.roadmap_state.progress_percentage) || 0;
-      result.user_profile = this.normalizeCriteriaProfile(result.user_profile);
-      return result;
+      console.log(`[AI] Groq (${label}) raw response:`, rawText);
+      return rawText;
     } catch (err: any) {
-      console.error('--- Groq Error Details ---');
-      console.error('Error Message:', err.message);
-      throw new InternalServerErrorException(`Groq analysis failed: ${err.message}`);
+      console.error(`--- Groq (${label}) Error ---`, err.message);
+      throw new InternalServerErrorException(`Groq ${label} analysis failed: ${err.message}`);
     }
+  }
+
+  private parseGroqResponse<T>(rawText: string, label: string): T {
+    // First attempt: direct parse
+    try {
+      return JSON.parse(rawText) as T;
+    } catch {
+      // Fallback: strip markdown wrappers and retry
+    }
+
+    const sanitized = this.sanitizeLlmJson(rawText);
+    try {
+      return JSON.parse(sanitized) as T;
+    } catch (err: any) {
+      throw new InternalServerErrorException(
+        `Failed to parse Groq (${label}) response as JSON after sanitization. ` +
+        `Raw (first 500 chars): ${rawText.slice(0, 500)}`,
+      );
+    }
+  }
+
+  private sanitizeLlmJson(raw: string): string {
+    // Strip markdown code fences: ```json ... ``` or ``` ... ```
+    let cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    // Remove any leading/trailing non-JSON characters (preamble/postscript)
+    const firstBrace = cleaned.indexOf('{');
+    const firstBracket = cleaned.indexOf('[');
+    const start = firstBrace >= 0 && (firstBracket < 0 || firstBrace < firstBracket)
+      ? firstBrace
+      : firstBracket;
+    if (start > 0) {
+      cleaned = cleaned.slice(start);
+    }
+    // Find last closing brace/bracket
+    const lastBrace = cleaned.lastIndexOf('}');
+    const lastBracket = cleaned.lastIndexOf(']');
+    const end = lastBrace > lastBracket ? lastBrace : lastBracket;
+    if (end >= 0 && end < cleaned.length - 1) {
+      cleaned = cleaned.slice(0, end + 1);
+    }
+    return cleaned.trim();
   }
 
   /** Coerce all integer criteria fields to numbers, clamp to 1–5, and keep strings as strings. */
@@ -354,27 +638,51 @@ export class OpenFinanceService {
     };
   }
 
-  private async persistAnalysisResult(
-    geminiResult: GeminiAnalysisResult,
-    userId: string,
-    goalTemplates: RoadmapGoal[],
-  ): Promise<PersistAnalysisResult> {
-    const templateMap = new Map(goalTemplates.map((g) => [g.goalId, g]));
-    const currentStep = geminiResult.roadmap_state.current_step;
+  /**
+   * Non-destructive persistence of a state-aware reassessment.
+   *
+   * Unlike the previous delete-and-reinsert approach, this:
+   *  - upserts the current RoadmapState + UserProfile projection,
+   *  - appends an immutable UserProfileHistory row (level/criteria/progress only),
+   *  - applies the LLM's ID-based task diff, preserving task identity and never
+   *    creating duplicate task instances.
+   *
+   * No raw financial data is written anywhere.
+   */
+  private async applyReconciliation(params: {
+    userId: string;
+    currentStep: number;
+    roadmapState: GeminiAnalysisResult['roadmap_state'];
+    userProfile: AiCriteriaProfile;
+    decision: ReconciliationDecision;
+    goalTemplates: RoadmapGoal[];
+    context: UserReconciliationContext;
+  }): Promise<PersistAnalysisResult> {
+    const { userId, currentStep, decision } = params;
+    const p = params.userProfile;
+    const templateMap = new Map(params.goalTemplates.map((g) => [g.goalId, g]));
+    const allowedAddIds = new Set(
+      params.goalTemplates.filter((g) => g.stepId === currentStep).map((g) => g.goalId),
+    );
+
+    const priorStep = params.context.currentState?.currentStepId ?? null;
+    const priorProgress = params.context.currentState?.progressPercent ?? null;
+    const newProgress = params.roadmapState.progress_percentage;
 
     return this.dataSource.transaction(async (manager) => {
-      // --- Upsert RoadmapState for this user ---
+      const now = new Date();
+
+      // --- Upsert RoadmapState (current projection) ---
       let state = await manager.findOne(RoadmapState, { where: { userId } });
       if (!state) {
         state = manager.create(RoadmapState, { userId });
       }
       state.currentStepId = currentStep;
-      state.progressPercent = geminiResult.roadmap_state.progress_percentage;
-      state.stateDescription = geminiResult.roadmap_state.state_description;
+      state.progressPercent = newProgress;
+      state.stateDescription = params.roadmapState.state_description;
       const savedState = await manager.save(RoadmapState, state);
 
       // --- Upsert UserProfile with 8 granular criteria + demographics ---
-      const p = geminiResult.user_profile;
       let profile = await manager.findOne(UserProfile, { where: { userId } });
       if (!profile) {
         profile = manager.create(UserProfile, { userId });
@@ -394,44 +702,119 @@ export class OpenFinanceService {
       if (p.occupation !== null)     profile.occupation     = p.occupation;
       await manager.save(UserProfile, profile);
 
-      // --- Cleanup: delete existing user_goals linked to templates of the new step ---
-      const stepGoalIds = goalTemplates
-        .filter((g) => g.stepId === currentStep)
-        .map((g) => g.goalId);
+      // --- Append immutable assessment history (abstracted, no raw financials) ---
+      const history = manager.create(UserProfileHistory, {
+        userId,
+        step: currentStep,
+        progressPercent: newProgress,
+        cashFlow: p.cash_flow,
+        creditConsumption: p.credit_consumption,
+        loans: p.loans,
+        savingsInvestments: p.savings_investments,
+        pensionLongTerm: p.pension_long_term,
+        lifestyleClubs: p.lifestyle_clubs,
+        mortgage: p.mortgage,
+        systemIndicators: p.system_indicators,
+        previousStep: priorStep,
+        stepChanged: priorStep != null && priorStep !== currentStep,
+        progressDelta: priorProgress != null ? newProgress - priorProgress : null,
+        stateDescription: params.roadmapState.state_description,
+        llmReasoning: decision.progress_assessment.summary,
+      });
+      const savedHistory = await manager.save(UserProfileHistory, history);
+      const historyId = savedHistory.historyId;
 
-      if (stepGoalIds.length) {
-        await manager.delete(UserGoal, { userId, roadmapGoalId: In(stepGoalIds) });
+      // --- Apply the ID-based task reconciliation (non-destructive) ---
+      const existing = await manager.find(UserGoal, { where: { userId } });
+      const byId = new Map(existing.map((t) => [t.goalId, t]));
+      const byRoadmapId = new Map<string, UserGoal>();
+      for (const t of existing) {
+        if (t.roadmapGoalId && !byRoadmapId.has(t.roadmapGoalId)) {
+          byRoadmapId.set(t.roadmapGoalId, t);
+        }
+      }
+      const touched = new Set<UserGoal>();
+
+      // Completions
+      for (const c of decision.task_reconciliation.complete) {
+        const t = byId.get(c.user_goal_id);
+        if (!t) continue; // ownership / hallucination guard
+        t.status = UserGoalStatus.COMPLETED;
+        t.completedAt = now;
+        touched.add(t);
       }
 
-      // --- Insert new user_goals from Gemini's selected_tasks ---
-      const newGoals = geminiResult.selected_tasks.map((task) => {
-        const template = templateMap.get(task.roadmap_goal_id);
-        return manager.create(UserGoal, {
-          userId,
-          roadmapGoalId: task.roadmap_goal_id,
-          goalName: template?.title ?? 'Unknown Goal',
-          dynamicParams: task.dynamic_params ?? {},
-          targetAmount: task.target_amount ?? undefined,
-          currentAmount: task.current_amount ?? 0,
-          targetDate: task.target_date ? new Date(task.target_date) : undefined,
-          isCompleted: false,
-          aiInsight: task.ai_insight,
-        });
+      // Removals (soft-delete; never un-complete a completed task)
+      for (const r of decision.task_reconciliation.remove) {
+        const t = byId.get(r.user_goal_id);
+        if (!t || t.status === UserGoalStatus.COMPLETED) continue;
+        t.status = UserGoalStatus.REMOVED;
+        t.removedAt = now;
+        t.removalReason = r.reason ?? null;
+        touched.add(t);
+      }
+
+      // Reprioritization (explicit + any priority carried on keep[])
+      const reprioritized = [
+        ...decision.task_reconciliation.reprioritize,
+        ...decision.task_reconciliation.keep
+          .filter((k) => k.new_priority != null)
+          .map((k) => ({ user_goal_id: k.user_goal_id, new_priority: k.new_priority as number })),
+      ];
+      for (const rp of reprioritized) {
+        const t = byId.get(rp.user_goal_id);
+        if (!t) continue;
+        t.priority = Number(rp.new_priority) || t.priority;
+        touched.add(t);
+      }
+
+      // Additions (dedup + reactivate to preserve identity, never duplicate)
+      for (const a of decision.task_reconciliation.add) {
+        if (!allowedAddIds.has(a.roadmap_goal_id)) continue; // out-of-step / hallucinated id guard
+        const dup = byRoadmapId.get(a.roadmap_goal_id);
+        if (dup) {
+          if (dup.status === UserGoalStatus.COMPLETED) continue; // preserve completion, no duplicate
+          dup.status = UserGoalStatus.ACTIVE;
+          dup.removedAt = null;
+          dup.removalReason = null;
+          dup.dynamicParams = a.dynamic_params ?? dup.dynamicParams ?? {};
+          dup.aiInsight = a.ai_insight ?? dup.aiInsight;
+          dup.priority = Number(a.priority) || dup.priority || 0;
+          if (a.target_amount != null) dup.targetAmount = a.target_amount;
+          if (a.target_date) dup.targetDate = new Date(a.target_date);
+          dup.sourceProfileHistoryId = historyId;
+          touched.add(dup);
+        } else {
+          const template = templateMap.get(a.roadmap_goal_id);
+          const created = manager.create(UserGoal, {
+            userId,
+            roadmapGoalId: a.roadmap_goal_id,
+            goalName: template?.title ?? 'Unknown Goal',
+            dynamicParams: a.dynamic_params ?? {},
+            targetAmount: a.target_amount ?? undefined,
+            currentAmount: 0,
+            targetDate: a.target_date ? new Date(a.target_date) : undefined,
+            status: UserGoalStatus.ACTIVE,
+            priority: Number(a.priority) || 0,
+            sourceProfileHistoryId: historyId,
+            aiInsight: a.ai_insight,
+          });
+          touched.add(created);
+        }
+      }
+
+      if (touched.size) {
+        await manager.save(UserGoal, Array.from(touched));
+      }
+
+      // Return the user's currently active tasks with their templates populated.
+      const activeGoals = await manager.find(UserGoal, {
+        where: { userId, status: UserGoalStatus.ACTIVE },
+        relations: ['roadmapGoal'],
+        order: { priority: 'ASC' },
       });
 
-      const savedGoals = await manager.save(UserGoal, newGoals);
-
-      // Re-fetch saved goals with their RoadmapGoal template relation populated
-      // so the client receives the full template data (title, type, priority, etc.)
-      const goalIds = savedGoals.map((g) => g.goalId);
-      const goalsWithRelation = goalIds.length
-        ? await manager.find(UserGoal, {
-            where: { goalId: In(goalIds) },
-            relations: ['roadmapGoal'],
-          })
-        : [];
-
-      return { roadmap_state: savedState, user_goals: goalsWithRelation };
+      return { roadmap_state: savedState, user_goals: activeGoals };
     });
   }
 
@@ -442,6 +825,7 @@ export class OpenFinanceService {
   async resetUserData(userId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       await manager.delete(UserGoal, { userId });
+      await manager.delete(UserProfileHistory, { userId });
       await manager.delete(UserProfile, { userId });
       await manager.delete(RoadmapState, { userId });
     });

@@ -1,6 +1,7 @@
-import { IsUUID, IsNumber, IsBoolean, IsOptional, Min } from 'class-validator';
+import { IsUUID, IsNumber, IsOptional, IsEnum, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { UserGoalStatus } from '../../database/entities/user-goal.entity.js';
 
 export class UpdateGoalDto {
   @ApiProperty({ description: 'UUID of the goal to update', format: 'uuid' })
@@ -14,9 +15,11 @@ export class UpdateGoalDto {
   @Min(0)
   currentAmount?: number;
 
-  @ApiPropertyOptional({ description: 'Whether the goal is completed' })
+  @ApiPropertyOptional({
+    description: 'Lifecycle status of the goal',
+    enum: UserGoalStatus,
+  })
   @IsOptional()
-  @Transform(({ value }) => (value !== undefined && value !== null ? Boolean(value) : value))
-  @IsBoolean()
-  isCompleted?: boolean;
+  @IsEnum(UserGoalStatus)
+  status?: UserGoalStatus;
 }

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { UserGoal } from '../database/entities/user-goal.entity.js';
+import { UserGoal, UserGoalStatus } from '../database/entities/user-goal.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
@@ -83,8 +83,9 @@ export class GoalsService {
     return profile.currentStep;
   }
 
-  async getGoals(userId: string) {
-    return this.goalRepo.find({ where: { userId } });
+  async getGoals(userId: string, status?: UserGoalStatus) {
+    const where = status ? { userId, status } : { userId };
+    return this.goalRepo.find({ where, order: { priority: 'ASC' } });
   }
 
   async createGoal(userId: string, body: any) {
@@ -117,11 +118,26 @@ export class GoalsService {
     if (dto.currentAmount !== undefined) {
       goal.currentAmount = dto.currentAmount;
     }
-    if (dto.isCompleted !== undefined) {
-      goal.isCompleted = dto.isCompleted;
+    if (dto.status !== undefined) {
+      this.applyStatusTransition(goal, dto.status);
     }
 
     return this.goalRepo.save(goal);
+  }
+
+  /**
+   * Applies a lifecycle status change and keeps the associated timestamps
+   * consistent. Centralized so every status mutation records when it happened.
+   */
+  private applyStatusTransition(goal: UserGoal, status: UserGoalStatus): void {
+    goal.status = status;
+    goal.completedAt = status === UserGoalStatus.COMPLETED ? new Date() : null;
+    goal.removedAt =
+      status === UserGoalStatus.REMOVED ||
+      status === UserGoalStatus.ABANDONED ||
+      status === UserGoalStatus.EXPIRED
+        ? new Date()
+        : null;
   }
 
   async deleteGoal(goalId: string) {
