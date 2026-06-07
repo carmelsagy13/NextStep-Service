@@ -254,6 +254,11 @@ export class OpenFinanceService {
         metrics: {
           totalMonthlyIncome: 0,
           totalMonthlyExpenses: 0,
+          totalMonthlySavingsInvestments: 0,
+          totalMonthlyDebtPayments: 0,
+          netCashFlow: 0,
+          discretionarySurplus: 0,
+          savingsRate: 0,
           currentBalance: 0,
         },
         aggregatedCategories: [],
@@ -273,6 +278,10 @@ export class OpenFinanceService {
     // Calculate financial metrics
     let totalMonthlyIncome = 0;
     let totalMonthlyExpenses = 0;
+    // Money intentionally directed toward wealth-building (NOT a living cost).
+    let totalMonthlySavingsInvestments = 0;
+    // Loan / mortgage repayments (debt servicing, tracked separately).
+    let totalMonthlyDebtPayments = 0;
     const currentBalance: number =
       typeof data.balance === 'number'
         ? data.balance
@@ -280,8 +289,15 @@ export class OpenFinanceService {
           ? data.currentBalance
           : 0;
 
+    // Outflows that build net worth rather than consume it — these must NOT be
+    // counted as expenses, otherwise a disciplined investor looks cash-negative.
+    const SAVINGS_INVEST_KEYWORDS =
+      /invest|pension|saving|provident|gemel|securities|stock|etf|fund|deposit|השקע|פנסי|חיסכו|חסכו|גמל|השתלמות|ניירות ערך|מניות|קרן סל|קרן נאמנות|פיקדון|חיסכון/i;
+    // Debt servicing — informative but distinct from discretionary spending.
+    const DEBT_KEYWORDS =
+      /loan|mortgage|repayment|הלוואה|משכנתא|החזר הלוואה|החזר משכנתא/i;
     const HIGH_IMPACT_KEYWORDS =
-      /loan|הלוואה|mortgage|משכנתא|overdraft|מינוס|עמלה/i;
+      /loan|הלוואה|mortgage|משכנתא|overdraft|מינוס|עמלה|invest|השקע|pension|פנסי|גמל|השתלמות/i;
     const HIGH_AMOUNT_THRESHOLD = 1000;
 
     const highImpactTransactions: Array<Record<string, any>> = [];
@@ -293,10 +309,16 @@ export class OpenFinanceService {
       const absAmount = Math.abs(amount);
       const description: string = tx.description ?? tx.memo ?? tx.name ?? '';
       const category: string = tx.category ?? tx.type ?? 'uncategorized';
+      const haystack = `${category} ${description}`;
 
-      // Income vs Expense classification
+      // Income vs outflow classification. Outflows are split into three buckets
+      // so the LLM can tell consumption apart from wealth-building and debt.
       if (amount > 0) {
         totalMonthlyIncome += amount;
+      } else if (SAVINGS_INVEST_KEYWORDS.test(haystack)) {
+        totalMonthlySavingsInvestments += absAmount;
+      } else if (DEBT_KEYWORDS.test(haystack)) {
+        totalMonthlyDebtPayments += absAmount;
       } else {
         totalMonthlyExpenses += absAmount;
       }
@@ -329,10 +351,32 @@ export class OpenFinanceService {
       );
     }
 
+    // Derived health indicators.
+    // discretionarySurplus = what's left after living costs + debt, BEFORE voluntary
+    //   saving/investing. Positive here means the user can afford to build wealth.
+    // netCashFlow = actual change in liquid cash after everything (incl. investing).
+    //   It can be negative for a healthy investor who deploys their surplus.
+    const discretionarySurplus =
+      totalMonthlyIncome - totalMonthlyExpenses - totalMonthlyDebtPayments;
+    const netCashFlow = discretionarySurplus - totalMonthlySavingsInvestments;
+    const savingsRate =
+      totalMonthlyIncome > 0
+        ? Math.round(
+            (totalMonthlySavingsInvestments / totalMonthlyIncome) * 100,
+          )
+        : 0;
+
     const summary = {
       metrics: {
         totalMonthlyIncome: Math.round(totalMonthlyIncome),
         totalMonthlyExpenses: Math.round(totalMonthlyExpenses),
+        totalMonthlySavingsInvestments: Math.round(
+          totalMonthlySavingsInvestments,
+        ),
+        totalMonthlyDebtPayments: Math.round(totalMonthlyDebtPayments),
+        netCashFlow: Math.round(netCashFlow),
+        discretionarySurplus: Math.round(discretionarySurplus),
+        savingsRate,
         currentBalance: Math.round(currentBalance),
       },
       aggregatedCategories,
@@ -365,6 +409,16 @@ export class OpenFinanceService {
     const systemPrompt = [
       'You are an expert Israeli financial analyst.',
       'Evaluate the user financial summary below and return a JSON object representing their profile.',
+      '',
+      '## How to read the metrics block',
+      '- totalMonthlyIncome: all incoming money (salary, dividends, interest).',
+      '- totalMonthlyExpenses: TRUE living/consumption costs only (rent, groceries, utilities, leisure).',
+      '- totalMonthlySavingsInvestments: money the user DELIBERATELY moves into wealth-building (investments, pension, provident funds, savings). This is a STRENGTH, never a deficit or a problem.',
+      '- totalMonthlyDebtPayments: loan/mortgage servicing.',
+      '- discretionarySurplus = income - expenses - debt. This is the real cash-flow health signal: POSITIVE means the user lives within their means and can build wealth.',
+      '- netCashFlow = discretionarySurplus - savingsInvestments. A NEGATIVE netCashFlow combined with a POSITIVE discretionarySurplus is HEALTHY — it means the user is investing their surplus, not overspending. Do NOT treat this as financial distress.',
+      '- savingsRate: % of income directed to savings/investments. Higher = more advanced.',
+      'Judge cash_flow on discretionarySurplus (and expenses vs income), NOT on netCashFlow. Reward high savingsRate and active investing/pension when scoring savings_investments and pension_long_term.',
       '',
       '## 8 Granular Financial Criteria — Stage Definitions',
       criteriaByStageSection,
@@ -417,6 +471,12 @@ export class OpenFinanceService {
     const systemPrompt = [
       'You are an expert Israeli financial analyst. All textual output MUST be in Hebrew.',
       'Determine which of the 5 financial stages the user is currently in based on their summary.',
+      '',
+      '## How to read the metrics block',
+      '- totalMonthlyExpenses is TRUE living costs only. Money moved into investments, pension, provident funds or savings is in totalMonthlySavingsInvestments and is a SIGN OF STRENGTH, not spending.',
+      '- discretionarySurplus = income - expenses - debt. POSITIVE = the user lives within their means (healthy cash flow). Use THIS to judge cash flow.',
+      '- netCashFlow = discretionarySurplus - savingsInvestments. A NEGATIVE netCashFlow with a POSITIVE discretionarySurplus is HEALTHY: the user is deploying surplus into wealth-building. NEVER classify such a user as Stage 1 (survival) for this reason.',
+      '- Active investing + pension + high savingsRate point toward the HIGHER stages (4–5), not lower ones.',
       '',
       '## Financial Stage Definitions',
       stagesSection,
@@ -547,6 +607,11 @@ export class OpenFinanceService {
       'The user already has a profile, a pyramid level and a set of tasks. Do NOT',
       'rebuild from scratch. Compare the NEW financial summary against the existing',
       'tasks and history, then return an ID-based reconciliation diff.',
+      '',
+      '## How to read the metrics block',
+      '- totalMonthlyExpenses is TRUE living costs only. Money in totalMonthlySavingsInvestments (investments, pension, savings) is wealth-building, NOT spending.',
+      '- discretionarySurplus (income - expenses - debt) is the cash-flow health signal. POSITIVE = healthy. Judge cash flow on this, not on netCashFlow.',
+      '- A NEGATIVE netCashFlow with a POSITIVE discretionarySurplus means the user invests their surplus — that is HEALTHY. NEVER describe it as "negative cash flow" or a deficit in ai_insight text.',
       '',
       '## Rules',
       '- Reference existing tasks ONLY by their user_goal_id.',
