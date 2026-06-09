@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   UnauthorizedException,
+  ForbiddenException,
   BadGatewayException,
   RequestTimeoutException,
   InternalServerErrorException,
@@ -88,7 +89,20 @@ export class OpenFinanceApiService {
     this.logger.log(`connectAndAnalyze START — customer=${externalUserId}`);
 
     const token = await this.authenticate();
-    await this.ensureActiveConnection(token, externalUserId);
+    try {
+      await this.ensureActiveConnection(token, externalUserId);
+    } catch (err) {
+      // A 403 during connection setup (e.g. open-banking finalize) shouldn't
+      // block the flow — the connection may already be usable. Proceed to the
+      // report job anyway and let polling surface any real data problem.
+      if (err instanceof ForbiddenException) {
+        this.logger.warn(
+          `Connection setup returned 403 — proceeding to report anyway: ${err.message}`,
+        );
+      } else {
+        throw err;
+      }
+    }
 
     const jobId = await this.createFinancialReportJob(token, externalUserId);
     const report = await this.pollFinancialReport(token, jobId);
@@ -405,7 +419,8 @@ export class OpenFinanceApiService {
   private toHttpException(err: unknown, context: string): Error {
     if (
       err instanceof BadGatewayException ||
-      err instanceof UnauthorizedException
+      err instanceof UnauthorizedException ||
+      err instanceof ForbiddenException
     ) {
       return err;
     }
@@ -418,6 +433,11 @@ export class OpenFinanceApiService {
       this.cachedToken = null;
       return new UnauthorizedException(
         `Open Finance rejected the access token during ${context}`,
+      );
+    }
+    if (status === 403) {
+      return new ForbiddenException(
+        `Open Finance returned 403 during ${context}`,
       );
     }
     return new BadGatewayException(
