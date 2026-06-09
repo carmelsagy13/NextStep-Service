@@ -21,6 +21,8 @@ import {
 import {
   DEFAULT_SANDBOX_PROVIDER_ID,
   HTTP_TIMEOUT_MS,
+  JOB_CREATE_MAX_ATTEMPTS,
+  JOB_CREATE_RETRY_DELAY_MS,
   POLL_INTERVAL_MS,
   POLL_TIMEOUT_MS,
   TOKEN_DEFAULT_TTL_SECONDS,
@@ -293,24 +295,55 @@ export class OpenFinanceApiService {
     token: string,
     customerId: string,
   ): Promise<string> {
-    try {
-      const { data } = await this.http.post<OFCreateReportResponse>(
-        `/v2/financial-report/${encodeURIComponent(customerId)}`,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+    // A connection that was just activated may not be report-ready yet (bank
+    // data still syncing), so the first attempt can return without a jobId or
+    // fail transiently. Retry a few times before surfacing an error — this is
+    // what made the *first* request flaky while retries "just worked".
+    let lastErr: unknown;
+    let lastReason = 'unknown';
+    for (let attempt = 1; attempt <= JOB_CREATE_MAX_ATTEMPTS; attempt++) {
+      try {
+        const { data } = await this.http.post<OFCreateReportResponse>(
+          `/v2/financial-report/${encodeURIComponent(customerId)}`,
+          {},
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
 
-      const jobId = firstString(data?.jobId, data?.job_id, data?.id);
-      if (!jobId) {
-        throw new BadGatewayException(
+        const jobId = firstString(data?.jobId, data?.job_id, data?.id);
+        if (jobId) {
+          this.logger.log(
+            `Financial-report job created — jobId=${jobId}` +
+              (attempt > 1 ? ` (attempt ${attempt})` : ''),
+          );
+          return jobId;
+        }
+
+        // 2xx but no jobId — bank data almost certainly still syncing. Capture
+        // the raw body so we can see whether the provider hints at a status.
+        lastReason = `no jobId in response body: ${JSON.stringify(data)?.slice(0, 200)}`;
+        lastErr = new BadGatewayException(
           `Open Finance /v2/financial-report/${customerId} did not return a jobId`,
         );
+      } catch (err) {
+        lastErr = err;
+        const ax = err as AxiosError;
+        const status = ax.response?.status;
+        const body = ax.response?.data
+          ? JSON.stringify(ax.response.data).slice(0, 200)
+          : ax.message;
+        lastReason = `HTTP ${status ?? '?'} — ${body}`;
       }
-      this.logger.log(`Financial-report job created — jobId=${jobId}`);
-      return jobId;
-    } catch (err) {
-      throw this.toHttpException(err, 'job creation');
+
+      if (attempt < JOB_CREATE_MAX_ATTEMPTS) {
+        this.logger.warn(
+          `Financial-report not ready (attempt ${attempt}/${JOB_CREATE_MAX_ATTEMPTS}) — ` +
+            `reason: ${lastReason} — retrying in ${JOB_CREATE_RETRY_DELAY_MS / 1000}s`,
+        );
+        await sleep(JOB_CREATE_RETRY_DELAY_MS);
+      }
     }
+
+    throw this.toHttpException(lastErr, 'job creation');
   }
 
   private async pollFinancialReport(

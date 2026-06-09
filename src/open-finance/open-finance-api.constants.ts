@@ -11,10 +11,20 @@ export const TOKEN_DEFAULT_TTL_SECONDS = 3_600;
 export const TOKEN_EXPIRY_SKEW_MS = 5_000;
 
 /** Delay between financial-report poll attempts. */
-export const POLL_INTERVAL_MS = 2_000;
+export const POLL_INTERVAL_MS = 1_500;
 
 /** Maximum time to wait for a financial-report job to complete. */
 export const POLL_TIMEOUT_MS = 120_000;
+
+/**
+ * A freshly-activated connection is not immediately report-ready: the bank data
+ * is still syncing, so the very first job-creation call can come back without a
+ * jobId. Retry creation a few times before giving up.
+ */
+export const JOB_CREATE_MAX_ATTEMPTS = 6;
+
+/** Delay between financial-report job-creation attempts. */
+export const JOB_CREATE_RETRY_DELAY_MS = 2_000;
 
 /** Job statuses that indicate successful completion. */
 export const TERMINAL_SUCCESS_STATUSES = [

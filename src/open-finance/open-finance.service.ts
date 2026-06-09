@@ -180,6 +180,10 @@ export class OpenFinanceService {
     bankingData: unknown,
     userId: string,
   ): Promise<PersistAnalysisResult> {
+    const __t0 = Date.now();
+    console.log(
+      `[TIMING] analyzeBankingJson START — ${new Date(__t0).toISOString()}`,
+    );
     // 1. Fetch stage definitions and active goal templates from the DB in parallel.
     const [stages, goalTemplates] = await Promise.all([
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
@@ -198,31 +202,31 @@ export class OpenFinanceService {
     // 2. Deterministic preprocessing — token diet.
     const summaryJson = this.preprocessBankingData(bankingData);
 
-    // 2b. Load the user's existing state & task history so the LLM can reason
-    //     about progression instead of recalculating from scratch.
-    const context = await this.loadUserContext(userId);
+    // 2b. Load the user's existing state & task history in PARALLEL with the LLM
+    //     calls. It is only consumed by the reconciliation step, so there is no
+    //     reason to block the model round-trip on this DB read.
+    const contextPromise = this.loadUserContext(userId);
 
-    // 3. Wave 1 — parallel: profile classification + roadmap state determination.
-    const [userProfile, roadmapState] = await Promise.all([
+    // 3. Single LLM round-trip. The focused profile classification runs in
+    //    parallel with a MERGED state-determination + reconciliation call. This
+    //    collapses the previous two sequential waves (state → reconciliation)
+    //    into one, roughly halving the model latency that dominates the request.
+    const [userProfile, { roadmapState, decision }] = await Promise.all([
       this.callGroqForProfile(summaryJson, stages),
-      this.callGroqForState(summaryJson, stages),
+      contextPromise.then((ctx) =>
+        this.callLlmForStateAndReconciliation(
+          summaryJson,
+          stages,
+          goalTemplates,
+          ctx,
+        ),
+      ),
     ]);
 
-    // 4. Wave 2 — state-aware reconciliation: compare the freshly-determined step
-    //    and the new financial summary against the user's existing tasks, then
-    //    decide which to keep / remove / reprioritize / complete / add (all by ID).
     const currentStep = roadmapState.current_step;
-    const filteredGoalTemplates = goalTemplates.filter(
-      (g) => g.stepId === currentStep,
-    );
-    const decision = await this.callGroqForReconciliation(
-      summaryJson,
-      currentStep,
-      filteredGoalTemplates,
-      context,
-    );
+    const context = await contextPromise;
 
-    // 5. Persist the reconciliation result (non-destructive) within a transaction.
+    // 4. Persist the reconciliation result (non-destructive) within a transaction.
     const clientResponse = await this.applyReconciliation({
       userId,
       currentStep,
@@ -236,6 +240,11 @@ export class OpenFinanceService {
     console.log(
       '[AI] Response sent to client:',
       JSON.stringify(clientResponse, null, 2),
+    );
+
+    const __elapsed = Date.now() - __t0;
+    console.log(
+      `[TIMING] analyzeBankingJson END — took ${__elapsed} ms (${(__elapsed / 1000).toFixed(2)} s)`,
     );
 
     return clientResponse;
@@ -457,53 +466,6 @@ export class OpenFinanceService {
     return this.parseGroqResponse<AiCriteriaProfile>(rawText, 'profile');
   }
 
-  private async callGroqForState(
-    summaryJson: string,
-    stages: RoadmapStep[],
-  ): Promise<GeminiAnalysisResult['roadmap_state']> {
-    const stagesSection = stages
-      .map((s) => {
-        const detail = s.description ?? JSON.stringify(s.criteria ?? {});
-        return `  Stage ${s.stepId} – ${s.title}: ${detail}`;
-      })
-      .join('\n');
-
-    const systemPrompt = [
-      'You are an expert Israeli financial analyst. All textual output MUST be in Hebrew.',
-      'Determine which of the 5 financial stages the user is currently in based on their summary.',
-      '',
-      '## How to read the metrics block',
-      '- totalMonthlyExpenses is TRUE living costs only. Money moved into investments, pension, provident funds or savings is in totalMonthlySavingsInvestments and is a SIGN OF STRENGTH, not spending.',
-      '- discretionarySurplus = income - expenses - debt. POSITIVE = the user lives within their means (healthy cash flow). Use THIS to judge cash flow.',
-      '- netCashFlow = discretionarySurplus - savingsInvestments. A NEGATIVE netCashFlow with a POSITIVE discretionarySurplus is HEALTHY: the user is deploying surplus into wealth-building. NEVER classify such a user as Stage 1 (survival) for this reason.',
-      '- Active investing + pension + high savingsRate point toward the HIGHER stages (4–5), not lower ones.',
-      '',
-      '## Financial Stage Definitions',
-      stagesSection,
-      '',
-      '## Required Output Schema (flat JSON object):',
-      JSON.stringify({
-        current_step: '<integer 1–5>',
-        progress_percentage: '<integer 0–100>',
-        state_description: '<Hebrew string describing current state>',
-      }),
-      '',
-      OpenFinanceService.STRICT_JSON_SUFFIX,
-    ].join('\n');
-
-    const rawText = await this.executeLlmCall(
-      systemPrompt,
-      summaryJson,
-      'state',
-    );
-    const result = this.parseGroqResponse<
-      GeminiAnalysisResult['roadmap_state']
-    >(rawText, 'state');
-    result.current_step = Number(result.current_step) || 1;
-    result.progress_percentage = Number(result.progress_percentage) || 0;
-    return result;
-  }
-
   /**
    * Loads the user's current profile, roadmap state, existing tasks (all
    * lifecycle states) and recent assessment history so the reconciliation LLM
@@ -535,38 +497,65 @@ export class OpenFinanceService {
   }
 
   /**
-   * State-aware reconciliation (Wave 2). Cross-references the new financial
-   * summary AND the user's existing tasks/history with the available goal
-   * templates for the determined step, then returns an ID-based diff:
-   * which tasks to keep, remove, reprioritize, complete and which to add.
+   * Merged state-determination + state-aware reconciliation in a SINGLE LLM
+   * round-trip. Determines the user's pyramid step from the new summary AND, in
+   * the same pass, cross-references their existing tasks/history against the
+   * full goal task bank to produce an ID-based diff (keep/remove/reprioritize/
+   * complete/add). Collapsing these two formerly-sequential calls roughly halves
+   * the model latency. The persistence step still guards added goals to the
+   * determined step, so sending the full task bank here is safe.
    *
    * Privacy: only abstracted prior assessments (criteria scores / step /
    * progress) are sent as history — never previously-stored raw financials.
    */
-  private async callGroqForReconciliation(
+  private async callLlmForStateAndReconciliation(
     summaryJson: string,
-    currentStep: number,
-    filteredGoalTemplates: RoadmapGoal[],
+    stages: RoadmapStep[],
+    allGoalTemplates: RoadmapGoal[],
     context: UserReconciliationContext,
-  ): Promise<ReconciliationDecision> {
-    const taskBankSection = filteredGoalTemplates.length
-      ? filteredGoalTemplates
-          .map((g) =>
-            [
-              `  - roadmap_goal_id: "${g.goalId}"`,
-              `    type: ${g.type}`,
-              `    title: "${g.title}"`,
-              `    description_template: "${g.descriptionTemplate}"`,
-              g.requiredContext
-                ? `    required_context: "${g.requiredContext}"`
-                : null,
-              `    priority: ${g.priority}`,
-            ]
-              .filter(Boolean)
-              .join('\n'),
-          )
+  ): Promise<{
+    roadmapState: GeminiAnalysisResult['roadmap_state'];
+    decision: ReconciliationDecision;
+  }> {
+    const stagesSection = stages
+      .map((s) => {
+        const detail = s.description ?? JSON.stringify(s.criteria ?? {});
+        return `  Stage ${s.stepId} – ${s.title}: ${detail}`;
+      })
+      .join('\n');
+
+    // Full task bank grouped by step. The model picks goals from the step it
+    // determines; applyReconciliation re-validates step membership.
+    const goalsByStep = new Map<number, RoadmapGoal[]>();
+    for (const g of allGoalTemplates) {
+      const list = goalsByStep.get(g.stepId) ?? [];
+      list.push(g);
+      goalsByStep.set(g.stepId, list);
+    }
+    const taskBankSection = allGoalTemplates.length
+      ? Array.from(goalsByStep.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([stepId, goals]) => {
+            const goalsText = goals
+              .map((g) =>
+                [
+                  `  - roadmap_goal_id: "${g.goalId}"`,
+                  `    type: ${g.type}`,
+                  `    title: "${g.title}"`,
+                  `    description_template: "${g.descriptionTemplate}"`,
+                  g.requiredContext
+                    ? `    required_context: "${g.requiredContext}"`
+                    : null,
+                  `    priority: ${g.priority}`,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              )
+              .join('\n\n');
+            return `### Step ${stepId} Goals\n${goalsText}`;
+          })
           .join('\n\n')
-      : '  (no goal templates available for this step)';
+      : '  (no goal templates available)';
 
     const existingTasksSection = context.existingTasks.length
       ? context.existingTasks
@@ -602,20 +591,30 @@ export class OpenFinanceService {
 
     const systemPrompt = [
       'You are an expert Israeli financial analyst running a STATEFUL reassessment.',
-      'All ai_insight and summary text MUST be in Hebrew.',
+      'All textual output (state_description, ai_insight, summary) MUST be in Hebrew.',
+      '',
+      'Do TWO things in ONE pass and return them together as a single JSON object:',
+      '1) DETERMINE which of the 5 financial stages the user is in from the new summary.',
+      "2) RECONCILE the user's existing tasks against that determined stage and",
+      '   return an ID-based reconciliation diff.',
+      '',
+      '## How to read the metrics block',
+      '- totalMonthlyExpenses is TRUE living costs only. Money in totalMonthlySavingsInvestments (investments, pension, savings) is wealth-building, NOT spending.',
+      '- discretionarySurplus = income - expenses - debt. POSITIVE = healthy cash flow. Judge cash flow on THIS, not on netCashFlow.',
+      '- A NEGATIVE netCashFlow with a POSITIVE discretionarySurplus is HEALTHY: the user is deploying surplus into wealth-building. NEVER classify such a user as Stage 1 and NEVER describe it as a "negative cash flow" or deficit.',
+      '- Active investing + pension + high savingsRate point toward the HIGHER stages (4–5).',
+      '',
+      '## Financial Stage Definitions',
+      stagesSection,
       '',
       'The user already has a profile, a pyramid level and a set of tasks. Do NOT',
       'rebuild from scratch. Compare the NEW financial summary against the existing',
       'tasks and history, then return an ID-based reconciliation diff.',
       '',
-      '## How to read the metrics block',
-      '- totalMonthlyExpenses is TRUE living costs only. Money in totalMonthlySavingsInvestments (investments, pension, savings) is wealth-building, NOT spending.',
-      '- discretionarySurplus (income - expenses - debt) is the cash-flow health signal. POSITIVE = healthy. Judge cash flow on this, not on netCashFlow.',
-      '- A NEGATIVE netCashFlow with a POSITIVE discretionarySurplus means the user invests their surplus — that is HEALTHY. NEVER describe it as "negative cash flow" or a deficit in ai_insight text.',
-      '',
-      '## Rules',
+      '## Reconciliation Rules',
+      '- FIRST set roadmap_state.current_step, then ONLY add goals whose step matches that current_step (the task bank below is grouped by step).',
       '- Reference existing tasks ONLY by their user_goal_id.',
-      '- Reference new tasks ONLY by a roadmap_goal_id taken from the Available Goal Templates.',
+      "- Reference new tasks ONLY by a roadmap_goal_id taken from the determined step's Available Goal Templates.",
       '- NEVER invent IDs. NEVER duplicate an existing task: if a relevant goal template',
       '  is already present among the existing tasks, KEEP or REPRIORITIZE it instead of adding it.',
       '- Put tasks that are no longer relevant (e.g. left over from a previous step) into "remove".',
@@ -623,7 +622,6 @@ export class OpenFinanceService {
       '- Only "add" templates that are genuinely relevant and not already assigned.',
       '',
       `## User's Current Pyramid Level: ${priorStep ?? 'unknown'} (progress ${priorProgress ?? 0}%)`,
-      `## Newly Determined Level From New Data: ${currentStep}`,
       '',
       '## Previous Assessments (abstracted — no raw financial data)',
       historySection,
@@ -631,11 +629,16 @@ export class OpenFinanceService {
       '## Existing Tasks',
       existingTasksSection,
       '',
-      `## Available Goal Templates (task bank for step ${currentStep})`,
+      '## Available Goal Templates (task bank, grouped by step)',
       taskBankSection,
       '',
       '## Required Output Schema (single JSON object):',
       JSON.stringify({
+        roadmap_state: {
+          current_step: '<integer 1–5>',
+          progress_percentage: '<integer 0–100>',
+          state_description: '<Hebrew string describing current state>',
+        },
         task_reconciliation: {
           keep: [
             {
@@ -652,7 +655,7 @@ export class OpenFinanceService {
           complete: [{ user_goal_id: '<existing UUID>' }],
           add: [
             {
-              roadmap_goal_id: '<UUID from task bank>',
+              roadmap_goal_id: "<UUID from the determined step's task bank>",
               target_amount: '<number or null>',
               target_date: '<ISO-8601 string or null>',
               dynamic_params: { key: 'value' },
@@ -674,13 +677,18 @@ export class OpenFinanceService {
     const rawText = await this.executeLlmCall(
       systemPrompt,
       summaryJson,
-      'reconciliation',
+      'state+reconciliation',
     );
-    const parsed = this.parseGroqResponse<ReconciliationDecision>(
-      rawText,
-      'reconciliation',
-    );
-    return this.normalizeReconciliationDecision(parsed);
+    const parsed = this.parseGroqResponse<any>(rawText, 'state+reconciliation');
+
+    const rs = parsed?.roadmap_state ?? {};
+    const roadmapState: GeminiAnalysisResult['roadmap_state'] = {
+      current_step: Number(rs.current_step) || 1,
+      progress_percentage: Number(rs.progress_percentage) || 0,
+      state_description: rs.state_description ?? '',
+    };
+    const decision = this.normalizeReconciliationDecision(parsed);
+    return { roadmapState, decision };
   }
 
   /** Defensive normalization so missing arrays never crash the apply step. */
@@ -711,11 +719,61 @@ export class OpenFinanceService {
     userContent: string,
     label: string,
   ): Promise<string> {
-    // Groq is opt-in via USE_GROQ=true; otherwise Gemini is used.
-    if (process.env.USE_GROQ === 'true') {
-      return this.executeGroqCall(systemPrompt, userContent, label);
+    const __t0 = Date.now();
+    console.log(`[TIMING] LLM call "${label}" START`);
+
+    // USE_GROQ=true makes Groq the primary provider; otherwise Gemini is.
+    // Whichever is primary, the OTHER acts as an automatic fallback so a single
+    // provider's outage (e.g. Gemini free-tier 503 "high demand") does not fail
+    // the whole request. Disable the fallback with LLM_FALLBACK=false.
+    const groqPrimary = process.env.USE_GROQ === 'true';
+    const fallbackEnabled = process.env.LLM_FALLBACK !== 'false';
+
+    const gemini = {
+      name: 'gemini',
+      run: () => this.executeGeminiCall(systemPrompt, userContent, label),
+    };
+    const groq = {
+      name: 'groq',
+      run: () => this.executeGroqCall(systemPrompt, userContent, label),
+    };
+    const primary = groqPrimary ? groq : gemini;
+    const secondary = groqPrimary ? gemini : groq;
+
+    try {
+      const result = await primary.run();
+      console.log(
+        `[TIMING] LLM call "${label}" END — took ${Date.now() - __t0} ms (${primary.name})`,
+      );
+      return result;
+    } catch (primaryErr: any) {
+      if (!fallbackEnabled) {
+        throw primaryErr;
+      }
+      console.warn(
+        `[AI] Primary provider "${primary.name}" failed for "${label}" — ` +
+          `falling back to "${secondary.name}": ${primaryErr?.message?.slice(0, 160)}`,
+      );
+      try {
+        const result = await secondary.run();
+        console.log(
+          `[TIMING] LLM call "${label}" END — took ${Date.now() - __t0} ms ` +
+            `(${secondary.name}, fallback)`,
+        );
+        return result;
+      } catch (secondaryErr: any) {
+        console.error(
+          `--- LLM call "${label}" failed on BOTH providers ---`,
+          `primary(${primary.name})=${primaryErr?.message}; ` +
+            `fallback(${secondary.name})=${secondaryErr?.message}`,
+        );
+        throw new InternalServerErrorException(
+          `LLM ${label} failed on both providers — ` +
+            `${primary.name}: ${primaryErr?.message}; ` +
+            `${secondary.name}: ${secondaryErr?.message}`,
+        );
+      }
     }
-    return this.executeGeminiCall(systemPrompt, userContent, label);
   }
 
   private async executeGeminiCall(
@@ -723,26 +781,81 @@ export class OpenFinanceService {
     userContent: string,
     label: string,
   ): Promise<string> {
-    try {
-      const model = this.gemini.getGenerativeModel({
-        model: this.geminiModel,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      });
-      const result = await model.generateContent(
-        `${systemPrompt}\n\n${userContent}`,
-      );
-      const rawText = (await result.response).text();
-      console.log(`[AI] Gemini (${label}) raw response:`, rawText);
-      return rawText;
-    } catch (err: any) {
-      console.error(`--- Gemini (${label}) Error ---`, err.message);
-      throw new InternalServerErrorException(
-        `Gemini ${label} analysis failed: ${err.message}`,
-      );
+    const model = this.gemini.getGenerativeModel({
+      model: this.geminiModel,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+        // Disable "thinking" on 2.5 models. These are structured-JSON
+        // classification tasks with explicit rules — extended reasoning adds
+        // ~20s of latency and burns free-tier token quota (more 429/503s) for
+        // no quality gain. thinkingBudget:0 is free; it does NOT enable billing.
+        // The field is forwarded by the SDK even though its v0.24 types omit it.
+        thinkingConfig: { thinkingBudget: 0 },
+      } as any,
+    });
+    const prompt = `${systemPrompt}\n\n${userContent}`;
+
+    // 503 ("high demand") and 429/500 are transient server-side conditions, not
+    // bugs. Retry a few times with exponential backoff + jitter so a brief
+    // Gemini spike self-heals. We keep this SHORT (3 attempts ≈ 1s+2s waits)
+    // because executeLlmCall falls back to the other provider (Groq) once this
+    // throws — better to hand off quickly than burn ~60s retrying one provider.
+    const MAX_ATTEMPTS = 3;
+    const BASE_DELAY_MS = 1_000;
+    const MAX_DELAY_MS = 30_000;
+
+    let lastErr: any;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const result = await model.generateContent(prompt);
+        const rawText = (await result.response).text();
+        console.log(`[AI] Gemini (${label}) raw response:`, rawText);
+        return rawText;
+      } catch (err: any) {
+        lastErr = err;
+        const msg: string = err?.message ?? '';
+        const isTransient =
+          /\b(503|500|429)\b|overloaded|high demand|UNAVAILABLE|Too Many Requests/i.test(
+            msg,
+          );
+
+        if (!isTransient || attempt === MAX_ATTEMPTS) {
+          break;
+        }
+
+        // Prefer the server-suggested retry delay when present, else backoff.
+        const suggested = this.parseRetryDelayMs(msg);
+        const backoff = Math.min(
+          BASE_DELAY_MS * 2 ** (attempt - 1),
+          MAX_DELAY_MS,
+        );
+        const jitter = Math.floor(Math.random() * 500);
+        const delay = (suggested ?? backoff) + jitter;
+
+        console.warn(
+          `[AI] Gemini (${label}) transient error (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+            `Retrying in ${delay}ms — ${msg.slice(0, 120)}`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
+
+    console.error(`--- Gemini (${label}) Error ---`, lastErr?.message);
+    throw new InternalServerErrorException(
+      `Gemini ${label} analysis failed: ${lastErr?.message}`,
+    );
+  }
+
+  /** Extracts Google's suggested retry delay (e.g. "Please retry in 49.4s") in ms. */
+  private parseRetryDelayMs(message: string): number | undefined {
+    // Matches "retryDelay":"49s" or "retry in 49.41226617s"
+    const match = message.match(/retry(?:Delay)?["\s:]*?(\d+(?:\.\d+)?)s/i);
+    if (!match) return undefined;
+    const seconds = Number(match[1]);
+    if (!Number.isFinite(seconds)) return undefined;
+    // Cap so a long server hint (e.g. daily quota) doesn't hang the request.
+    return Math.min(Math.ceil(seconds * 1000), 30_000);
   }
 
   private async executeGroqCall(
