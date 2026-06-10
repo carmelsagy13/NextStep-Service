@@ -16,14 +16,20 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const exists = await this.userRepo.findOne({ where: { email: dto.email } });
+    const exists = await this.userRepo.findOne({
+      where: [{ email: dto.email }, { id: dto.id }],
+    });
     if (exists) {
-      throw new ConflictException('Email already registered');
+      throw new ConflictException(
+        exists.email === dto.email
+          ? 'Email already registered'
+          : 'ID already registered',
+      );
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const user = await this.userRepo.save(
-      this.userRepo.create({ email: dto.email, passwordHash }),
+      this.userRepo.create({ id: dto.id, email: dto.email, passwordHash }),
     );
 
     const accessToken = this.jwtService.sign({ sub: user.userId, email: user.email });
