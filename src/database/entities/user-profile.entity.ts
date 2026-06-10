@@ -4,6 +4,8 @@ import {
   Column,
   OneToOne,
   JoinColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { User } from './user.entity.js';
 
@@ -66,6 +68,15 @@ export class UserProfile {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   occupation: string;
+
+  // ── Audit timestamps ──────────────────────────────────────────────────
+  /** Set automatically when the profile row is first created. */
+  @CreateDateColumn({ type: 'timestamp', name: 'created_at' })
+  createdAt: Date;
+
+  /** Refreshed automatically every time the profile row is modified. */
+  @UpdateDateColumn({ type: 'timestamp', name: 'updated_at' })
+  updatedAt: Date;
 
   @OneToOne(() => User, (user) => user.profile, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
