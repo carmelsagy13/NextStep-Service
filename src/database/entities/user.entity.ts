@@ -7,6 +7,10 @@ export class User {
   @PrimaryGeneratedColumn('uuid', { name: 'user_id' })
   userId: string;
 
+  /** External 9-character identifier (e.g. national ID). */
+  @Column({ type: 'varchar', length: 9, unique: true })
+  id: string;
+
   @Column({ type: 'varchar', length: 255, unique: true })
   email: string;
 
