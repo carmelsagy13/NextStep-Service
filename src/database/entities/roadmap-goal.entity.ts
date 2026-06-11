@@ -36,6 +36,9 @@ export class RoadmapGoal {
   @Column({ type: 'int' })
   priority: number;
 
+  @Column({ type: 'text', name: 'required_context_text', nullable: true })
+  requiredContextText: string;
+
   @OneToMany(() => UserGoal, (userGoal) => userGoal.roadmapGoal)
   userGoals: UserGoal[];
 }
