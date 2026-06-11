@@ -13,6 +13,7 @@ import { RoadmapModule } from './roadmap/roadmap.module.js';
 import { GoalsModule } from './goals/goals.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.module.js';
+import { LlmClientModule } from './llm-client/llm-client.module.js';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.modul
 
     ScheduleModule.forRoot(),
 
+    LlmClientModule,
     AuthModule,
     UserProfileModule,
     QuestionnaireModule,

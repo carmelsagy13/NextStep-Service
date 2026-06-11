@@ -16,8 +16,7 @@ import {
 } from '../database/entities/user-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import Groq from 'groq-sdk';
+import { LlmClientService } from '../llm-client/llm-client.service.js';
 
 export interface AiCriteriaProfile {
   current_step: number;
@@ -99,11 +98,6 @@ export interface ReconciliationDecision {
 
 @Injectable()
 export class OpenFinanceService {
-  private readonly gemini: GoogleGenerativeAI;
-  private readonly groq: Groq;
-  private readonly geminiModel: string;
-  private readonly groqModel: string;
-
   constructor(
     @InjectRepository(BankConsent)
     private readonly consentRepo: Repository<BankConsent>,
@@ -116,23 +110,8 @@ export class OpenFinanceService {
     @InjectRepository(UserProfileHistory)
     private readonly historyRepo: Repository<UserProfileHistory>,
     private readonly dataSource: DataSource,
-  ) {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) {
-      throw new InternalServerErrorException(
-        'GEMINI_API_KEY is not configured',
-      );
-    }
-    this.gemini = new GoogleGenerativeAI(geminiKey);
-    this.geminiModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-
-    const groqKey = process.env.GROQ_API_KEY;
-    if (!groqKey) {
-      throw new InternalServerErrorException('GROQ_API_KEY is not configured');
-    }
-    this.groq = new Groq({ apiKey: groqKey });
-    this.groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-  }
+    private readonly llm: LlmClientService,
+  ) {}
 
   async connect(body: any) {
     // TODO: create consent record, call Open Finance API, return consentUrl
@@ -212,7 +191,7 @@ export class OpenFinanceService {
     //    collapses the previous two sequential waves (state → reconciliation)
     //    into one, roughly halving the model latency that dominates the request.
     const [userProfile, { roadmapState, decision }] = await Promise.all([
-      this.callGroqForProfile(summaryJson, stages),
+      this.callLlmForProfile(summaryJson, stages),
       contextPromise.then((ctx) =>
         this.callLlmForStateAndReconciliation(
           summaryJson,
@@ -395,12 +374,12 @@ export class OpenFinanceService {
     return JSON.stringify(summary);
   }
 
-  // ─── TASK 2 & 3: 2-Wave Groq Pipeline with Validation ─────────────────────
+  // ─── TASK 2 & 3: 2-Wave LLM Pipeline with Validation ─────────────────────
 
   private static readonly STRICT_JSON_SUFFIX =
     'IMPORTANT: Return raw JSON only. Do NOT wrap output in markdown code blocks (```json ... ```), do NOT output preamble or postscript text. Ensure all Hebrew text strings are cleanly escaped as valid UTF-8.';
 
-  private async callGroqForProfile(
+  private async callLlmForProfile(
     summaryJson: string,
     stages: RoadmapStep[],
   ): Promise<AiCriteriaProfile> {
@@ -458,12 +437,8 @@ export class OpenFinanceService {
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    const rawText = await this.executeLlmCall(
-      systemPrompt,
-      summaryJson,
-      'profile',
-    );
-    return this.parseGroqResponse<AiCriteriaProfile>(rawText, 'profile');
+    const rawText = await this.llm.generate(systemPrompt, summaryJson, 'profile');
+    return this.llm.parseJson<AiCriteriaProfile>(rawText, 'profile');
   }
 
   /**
@@ -674,12 +649,12 @@ export class OpenFinanceService {
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    const rawText = await this.executeLlmCall(
+    const rawText = await this.llm.generate(
       systemPrompt,
       summaryJson,
       'state+reconciliation',
     );
-    const parsed = this.parseGroqResponse<any>(rawText, 'state+reconciliation');
+    const parsed = this.llm.parseJson<any>(rawText, 'state+reconciliation');
 
     const rs = parsed?.roadmap_state ?? {};
     const roadmapState: GeminiAnalysisResult['roadmap_state'] = {
@@ -710,224 +685,6 @@ export class OpenFinanceService {
         summary: raw?.progress_assessment?.summary ?? '',
       },
     };
-  }
-
-  // ─── Shared Groq Execution & Validation Helpers ────────────────────────────
-
-  private async executeLlmCall(
-    systemPrompt: string,
-    userContent: string,
-    label: string,
-  ): Promise<string> {
-    const __t0 = Date.now();
-    console.log(`[TIMING] LLM call "${label}" START`);
-
-    // USE_GROQ=true makes Groq the primary provider; otherwise Gemini is.
-    // Whichever is primary, the OTHER acts as an automatic fallback so a single
-    // provider's outage (e.g. Gemini free-tier 503 "high demand") does not fail
-    // the whole request. Disable the fallback with LLM_FALLBACK=false.
-    const groqPrimary = process.env.USE_GROQ === 'true';
-    const fallbackEnabled = process.env.LLM_FALLBACK !== 'false';
-
-    const gemini = {
-      name: 'gemini',
-      run: () => this.executeGeminiCall(systemPrompt, userContent, label),
-    };
-    const groq = {
-      name: 'groq',
-      run: () => this.executeGroqCall(systemPrompt, userContent, label),
-    };
-    const primary = groqPrimary ? groq : gemini;
-    const secondary = groqPrimary ? gemini : groq;
-
-    try {
-      const result = await primary.run();
-      console.log(
-        `[TIMING] LLM call "${label}" END — took ${Date.now() - __t0} ms (${primary.name})`,
-      );
-      return result;
-    } catch (primaryErr: any) {
-      if (!fallbackEnabled) {
-        throw primaryErr;
-      }
-      console.warn(
-        `[AI] Primary provider "${primary.name}" failed for "${label}" — ` +
-          `falling back to "${secondary.name}": ${primaryErr?.message?.slice(0, 160)}`,
-      );
-      try {
-        const result = await secondary.run();
-        console.log(
-          `[TIMING] LLM call "${label}" END — took ${Date.now() - __t0} ms ` +
-            `(${secondary.name}, fallback)`,
-        );
-        return result;
-      } catch (secondaryErr: any) {
-        console.error(
-          `--- LLM call "${label}" failed on BOTH providers ---`,
-          `primary(${primary.name})=${primaryErr?.message}; ` +
-            `fallback(${secondary.name})=${secondaryErr?.message}`,
-        );
-        throw new InternalServerErrorException(
-          `LLM ${label} failed on both providers — ` +
-            `${primary.name}: ${primaryErr?.message}; ` +
-            `${secondary.name}: ${secondaryErr?.message}`,
-        );
-      }
-    }
-  }
-
-  private async executeGeminiCall(
-    systemPrompt: string,
-    userContent: string,
-    label: string,
-  ): Promise<string> {
-    const model = this.gemini.getGenerativeModel({
-      model: this.geminiModel,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-        // Disable "thinking" on 2.5 models. These are structured-JSON
-        // classification tasks with explicit rules — extended reasoning adds
-        // ~20s of latency and burns free-tier token quota (more 429/503s) for
-        // no quality gain. thinkingBudget:0 is free; it does NOT enable billing.
-        // The field is forwarded by the SDK even though its v0.24 types omit it.
-        thinkingConfig: { thinkingBudget: 0 },
-      } as any,
-    });
-    const prompt = `${systemPrompt}\n\n${userContent}`;
-
-    // 503 ("high demand") and 429/500 are transient server-side conditions, not
-    // bugs. Retry a few times with exponential backoff + jitter so a brief
-    // Gemini spike self-heals. We keep this SHORT (3 attempts ≈ 1s+2s waits)
-    // because executeLlmCall falls back to the other provider (Groq) once this
-    // throws — better to hand off quickly than burn ~60s retrying one provider.
-    const MAX_ATTEMPTS = 3;
-    const BASE_DELAY_MS = 1_000;
-    const MAX_DELAY_MS = 30_000;
-
-    let lastErr: any;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        const result = await model.generateContent(prompt);
-        const rawText = (await result.response).text();
-        console.log(`[AI] Gemini (${label}) raw response:`, rawText);
-        return rawText;
-      } catch (err: any) {
-        lastErr = err;
-        const msg: string = err?.message ?? '';
-        const isTransient =
-          /\b(503|500|429)\b|overloaded|high demand|UNAVAILABLE|Too Many Requests/i.test(
-            msg,
-          );
-
-        if (!isTransient || attempt === MAX_ATTEMPTS) {
-          break;
-        }
-
-        // Prefer the server-suggested retry delay when present, else backoff.
-        const suggested = this.parseRetryDelayMs(msg);
-        const backoff = Math.min(
-          BASE_DELAY_MS * 2 ** (attempt - 1),
-          MAX_DELAY_MS,
-        );
-        const jitter = Math.floor(Math.random() * 500);
-        const delay = (suggested ?? backoff) + jitter;
-
-        console.warn(
-          `[AI] Gemini (${label}) transient error (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
-            `Retrying in ${delay}ms — ${msg.slice(0, 120)}`,
-        );
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
-
-    console.error(`--- Gemini (${label}) Error ---`, lastErr?.message);
-    throw new InternalServerErrorException(
-      `Gemini ${label} analysis failed: ${lastErr?.message}`,
-    );
-  }
-
-  /** Extracts Google's suggested retry delay (e.g. "Please retry in 49.4s") in ms. */
-  private parseRetryDelayMs(message: string): number | undefined {
-    // Matches "retryDelay":"49s" or "retry in 49.41226617s"
-    const match = message.match(/retry(?:Delay)?["\s:]*?(\d+(?:\.\d+)?)s/i);
-    if (!match) return undefined;
-    const seconds = Number(match[1]);
-    if (!Number.isFinite(seconds)) return undefined;
-    // Cap so a long server hint (e.g. daily quota) doesn't hang the request.
-    return Math.min(Math.ceil(seconds * 1000), 30_000);
-  }
-
-  private async executeGroqCall(
-    systemPrompt: string,
-    userContent: string,
-    label: string,
-  ): Promise<string> {
-    try {
-      const completion = await this.groq.chat.completions.create({
-        model: this.groqModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-        max_tokens: 3000,
-      });
-
-      const rawText = completion.choices[0]?.message?.content ?? '';
-      console.log(`[AI] Groq (${label}) raw response:`, rawText);
-      return rawText;
-    } catch (err: any) {
-      console.error(`--- Groq (${label}) Error ---`, err.message);
-      throw new InternalServerErrorException(
-        `Groq ${label} analysis failed: ${err.message}`,
-      );
-    }
-  }
-
-  private parseGroqResponse<T>(rawText: string, label: string): T {
-    // First attempt: direct parse
-    try {
-      return JSON.parse(rawText) as T;
-    } catch {
-      // Fallback: strip markdown wrappers and retry
-    }
-
-    const sanitized = this.sanitizeLlmJson(rawText);
-    try {
-      return JSON.parse(sanitized) as T;
-    } catch (err: any) {
-      throw new InternalServerErrorException(
-        `Failed to parse Groq (${label}) response as JSON after sanitization. ` +
-          `Raw (first 500 chars): ${rawText.slice(0, 500)}`,
-      );
-    }
-  }
-
-  private sanitizeLlmJson(raw: string): string {
-    // Strip markdown code fences: ```json ... ``` or ``` ... ```
-    let cleaned = raw
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```\s*$/i, '');
-    // Remove any leading/trailing non-JSON characters (preamble/postscript)
-    const firstBrace = cleaned.indexOf('{');
-    const firstBracket = cleaned.indexOf('[');
-    const start =
-      firstBrace >= 0 && (firstBracket < 0 || firstBrace < firstBracket)
-        ? firstBrace
-        : firstBracket;
-    if (start > 0) {
-      cleaned = cleaned.slice(start);
-    }
-    // Find last closing brace/bracket
-    const lastBrace = cleaned.lastIndexOf('}');
-    const lastBracket = cleaned.lastIndexOf(']');
-    const end = lastBrace > lastBracket ? lastBrace : lastBracket;
-    if (end >= 0 && end < cleaned.length - 1) {
-      cleaned = cleaned.slice(0, end + 1);
-    }
-    return cleaned.trim();
   }
 
   /** Coerce all integer criteria fields to numbers, clamp to 1–5, and keep strings as strings. */

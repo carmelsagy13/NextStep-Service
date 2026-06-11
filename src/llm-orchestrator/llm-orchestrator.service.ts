@@ -1,12 +1,10 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import Groq from 'groq-sdk';
 import { LlmGuidanceLog } from '../database/entities/llm-guidance-log.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
+import { LlmClientService } from '../llm-client/llm-client.service.js';
 
 export interface PersonalizedGoalRecommendation {
   roadmap_goal_id: string;
@@ -18,36 +16,11 @@ export interface PersonalizedGoalRecommendation {
 
 @Injectable()
 export class LlmOrchestratorService {
-  private readonly gemini: GoogleGenerativeAI;
-  private readonly groq: Groq;
-  private readonly geminiModel: string;
-  private readonly groqModel: string;
-
   constructor(
-    private readonly config: ConfigService,
+    private readonly llm: LlmClientService,
     @InjectRepository(LlmGuidanceLog)
     private readonly logRepo: Repository<LlmGuidanceLog>,
-  ) {
-    const geminiKey = this.config.get<string>('GEMINI_API_KEY', '');
-    if (!geminiKey)
-      throw new InternalServerErrorException(
-        'GEMINI_API_KEY is not configured',
-      );
-    this.gemini = new GoogleGenerativeAI(geminiKey);
-    this.geminiModel = this.config.get<string>(
-      'GEMINI_MODEL',
-      'gemini-1.5-flash',
-    );
-
-    const groqKey = this.config.get<string>('GROQ_API_KEY', '');
-    if (!groqKey)
-      throw new InternalServerErrorException('GROQ_API_KEY is not configured');
-    this.groq = new Groq({ apiKey: groqKey });
-    this.groqModel = this.config.get<string>(
-      'GROQ_MODEL',
-      'llama-3.3-70b-versatile',
-    );
-  }
+  ) {}
 
   // ─── Step 1: Financial Classification ────────────────────────────────────
 
@@ -245,47 +218,8 @@ export class LlmOrchestratorService {
   // ─── Private AI helpers ───────────────────────────────────────────────────
 
   private async callAi(prompt: string): Promise<string> {
-    const useBackup = this.config.get<string>('USE_BACKUP_AI') === 'true';
-    if (useBackup) {
-      console.log('Gemini raw prompt: ```\n' + prompt + '\n```');
-      return this.callGroq(prompt);
-    }
-    try {
-      const model = this.gemini.getGenerativeModel({ model: this.geminiModel });
-      console.log('Gemini raw prompt: ```\n' + prompt + '\n```');
-      const result = await model.generateContent(prompt);
-      const text = (await result.response).text();
-      return text
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-    } catch (err: any) {
-      const status: number | undefined = err?.status ?? err?.response?.status;
-      const groqEnabled = this.config.get<string>('USE_GROQ') === 'true';
-      if (groqEnabled && (status === 503 || status === 429)) {
-        console.warn(`[LLM] Gemini ${status} — falling back to Groq`);
-        return this.callGroq(prompt);
-      }
-      throw new InternalServerErrorException(
-        `Gemini call failed: ${err.message}`,
-      );
-    }
-  }
-
-  private async callGroq(prompt: string): Promise<string> {
-    try {
-      const completion = await this.groq.chat.completions.create({
-        model: this.groqModel,
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-      });
-      const content = completion.choices[0]?.message?.content ?? '{}';
-      return content;
-    } catch (err: any) {
-      throw new InternalServerErrorException(
-        `Groq call failed: ${err.message}`,
-      );
-    }
+    const raw = await this.llm.generate(prompt, '', 'orchestrator');
+    return this.llm.sanitizeJson(raw);
   }
 
   // ─── Legacy compatibility ─────────────────────────────────────────────────
