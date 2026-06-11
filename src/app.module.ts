@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { join } from 'node:path';
 import { AuthModule } from './auth/auth.module.js';
 import { UserProfileModule } from './user-profile/user-profile.module.js';
 import { QuestionnaireModule } from './questionnaire/questionnaire.module.js';
@@ -28,7 +29,9 @@ import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.modul
         password: config.get<string>('DB_PASSWORD'),
         database: config.get<string>('DB_NAME', 'next-step'),
         autoLoadEntities: true,
-        synchronize: true,
+        synchronize: false,
+        migrationsRun: true,
+        migrations: [join(__dirname, 'database', 'migrations', '*.js')],
       }),
     }),
 
