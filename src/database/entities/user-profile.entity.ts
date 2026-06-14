@@ -47,9 +47,6 @@ export class UserProfile {
   systemIndicators: number;
 
   // ── Demographic & context fields ──────────────────────────────────────
-  @Column({ type: 'int', nullable: true })
-  age: number;
-
   @Column({
     type: 'varchar',
     length: 50,
@@ -65,9 +62,6 @@ export class UserProfile {
     name: 'knowledge_level',
   })
   knowledgeLevel: string;
-
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  occupation: string;
 
   // ── Audit timestamps ──────────────────────────────────────────────────
   /** Set automatically when the profile row is first created. */
