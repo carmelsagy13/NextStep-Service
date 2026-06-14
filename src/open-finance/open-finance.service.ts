@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -28,10 +29,8 @@ export interface AiCriteriaProfile {
   lifestyle_clubs: number;
   mortgage: number;
   system_indicators: number;
-  age: number | null;
   risk_level: string | null;
   knowledge_level: string | null;
-  occupation: string | null;
 }
 
 export interface GeminiAnalysisResult {
@@ -98,6 +97,8 @@ export interface ReconciliationDecision {
 
 @Injectable()
 export class OpenFinanceService {
+  private readonly logger = new Logger(OpenFinanceService.name);
+
   constructor(
     @InjectRepository(BankConsent)
     private readonly consentRepo: Repository<BankConsent>,
@@ -160,9 +161,7 @@ export class OpenFinanceService {
     userId: string,
   ): Promise<PersistAnalysisResult> {
     const __t0 = Date.now();
-    console.log(
-      `[TIMING] analyzeBankingJson START — ${new Date(__t0).toISOString()}`,
-    );
+    this.logger.log(`analyzeBankingJson START — userId=${userId}`);
     // 1. Fetch stage definitions and active goal templates from the DB in parallel.
     const [stages, goalTemplates] = await Promise.all([
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
@@ -216,14 +215,15 @@ export class OpenFinanceService {
       context,
     });
 
-    console.log(
-      '[AI] Response sent to client:',
-      JSON.stringify(clientResponse, null, 2),
+    this.logger.debug(
+      `[AI] Final response sent to client (userId=${userId}):\n` +
+        JSON.stringify(clientResponse, null, 2),
     );
 
     const __elapsed = Date.now() - __t0;
-    console.log(
-      `[TIMING] analyzeBankingJson END — took ${__elapsed} ms (${(__elapsed / 1000).toFixed(2)} s)`,
+    this.logger.log(
+      `analyzeBankingJson END — userId=${userId} took ${__elapsed} ms ` +
+        `(${(__elapsed / 1000).toFixed(2)} s)`,
     );
 
     return clientResponse;
@@ -412,8 +412,6 @@ export class OpenFinanceService {
       criteriaByStageSection,
       '',
       '## Demographic Extraction',
-      '- age: integer (null if not determinable)',
-      '- occupation: string in Hebrew (null if not determinable)',
       '- risk_level: one of "low" | "medium" | "high"',
       '- knowledge_level: one of "beginner" | "intermediate" | "advanced"',
       '',
@@ -428,10 +426,8 @@ export class OpenFinanceService {
         lifestyle_clubs: '<integer 1–5>',
         mortgage: '<integer 1–5>',
         system_indicators: '<integer 1–5>',
-        age: '<integer or null>',
         risk_level: '<string or null>',
         knowledge_level: '<string or null>',
-        occupation: '<Hebrew string or null>',
       }),
       '',
       OpenFinanceService.STRICT_JSON_SUFFIX,
@@ -700,10 +696,8 @@ export class OpenFinanceService {
       lifestyle_clubs: clamp(raw?.lifestyle_clubs),
       mortgage: clamp(raw?.mortgage),
       system_indicators: clamp(raw?.system_indicators),
-      age: raw?.age != null ? Number(raw.age) || null : null,
       risk_level: raw?.risk_level ?? null,
       knowledge_level: raw?.knowledge_level ?? null,
-      occupation: raw?.occupation ?? null,
     };
   }
 
@@ -767,11 +761,9 @@ export class OpenFinanceService {
       profile.lifestyleClubs = p.lifestyle_clubs;
       profile.mortgage = p.mortgage;
       profile.systemIndicators = p.system_indicators;
-      if (p.age !== null) profile.age = p.age;
       if (p.risk_level !== null) profile.riskTolerance = p.risk_level;
       if (p.knowledge_level !== null)
         profile.knowledgeLevel = p.knowledge_level;
-      if (p.occupation !== null) profile.occupation = p.occupation;
       await manager.save(UserProfile, profile);
 
       // --- Append immutable assessment history (abstracted, no raw financials) ---

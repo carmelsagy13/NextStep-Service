@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmGuidanceLog } from '../database/entities/llm-guidance-log.entity.js';
@@ -16,6 +16,8 @@ export interface PersonalizedGoalRecommendation {
 
 @Injectable()
 export class LlmOrchestratorService {
+  private readonly logger = new Logger(LlmOrchestratorService.name);
+
   constructor(
     private readonly llm: LlmClientService,
     @InjectRepository(LlmGuidanceLog)
@@ -46,10 +48,8 @@ export class LlmOrchestratorService {
           lifestyle_clubs: profile.lifestyleClubs,
           mortgage: profile.mortgage,
           system_indicators: profile.systemIndicators,
-          age: profile.age,
           risk_tolerance: profile.riskTolerance,
           knowledge_level: profile.knowledgeLevel,
-          occupation: profile.occupation,
         },
         null,
         2,
@@ -67,23 +67,14 @@ export class LlmOrchestratorService {
       '{ "current_step": <integer 1-5> }',
     ].join('\n');
 
-    console.error('\n\n##################################################');
-    console.error('!!! DEBUG STEP 1: CLASSIFICATION PROMPT !!!');
-    console.error(prompt);
-    console.error('##################################################\n\n');
-
     const raw = await this.callAi(prompt);
-
-    console.error('\n\n##################################################');
-    console.error('!!! DEBUG STEP 1: CLASSIFICATION RAW RESPONSE !!!');
-    console.error(raw);
-    console.error('##################################################\n\n');
 
     const parsed = JSON.parse(raw);
     const step = Math.min(5, Math.max(1, Number(parsed.current_step) || 1));
 
-    console.error(
-      `[LLM][Step1-Classify] userId=${profile.userId} → step=${step}`,
+    this.logger.log(
+      `[Step1-Classify] userId=${profile.userId} → step=${step} ` +
+        `(model raw current_step=${parsed?.current_step})`,
     );
     return step;
   }
@@ -129,10 +120,8 @@ export class LlmOrchestratorService {
           lifestyle_clubs: profile.lifestyleClubs,
           mortgage: profile.mortgage,
           system_indicators: profile.systemIndicators,
-          age: profile.age,
           risk_tolerance: profile.riskTolerance,
           knowledge_level: profile.knowledgeLevel,
-          occupation: profile.occupation,
         },
         null,
         2,
@@ -166,17 +155,7 @@ export class LlmOrchestratorService {
         ' }',
     ].join('\n');
 
-    console.error('\n\n##################################################');
-    console.error('!!! DEBUG STEP 3: PERSONALIZATION PROMPT !!!');
-    console.error(prompt);
-    console.error('##################################################\n\n');
-
     const raw = await this.callAi(prompt);
-
-    console.error('\n\n##################################################');
-    console.error('!!! DEBUG STEP 3: PERSONALIZATION RAW RESPONSE !!!');
-    console.error(raw);
-    console.error('##################################################\n\n');
 
     let parsed: { recommendations: any[] };
     try {
@@ -199,8 +178,11 @@ export class LlmOrchestratorService {
       allowedIds.has(r.roadmap_goal_id),
     );
 
-    console.log(
-      `[LLM][Step3-Personalize] userId=${profile.userId} filteredGoals=${filteredGoals.length} returned=${safe.length}`,
+    const dropped = recommendations.length - safe.length;
+    this.logger.log(
+      `[Step3-Personalize] userId=${profile.userId} ` +
+        `filteredGoals=${filteredGoals.length} aiReturned=${recommendations.length} ` +
+        `kept=${safe.length}${dropped > 0 ? ` droppedInvalid=${dropped}` : ''}`,
     );
 
     return safe.map((r: any) => ({

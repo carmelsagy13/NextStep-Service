@@ -144,12 +144,13 @@ export class LlmClientService {
 
     const t0 = Date.now();
 
+    // Log exactly what the model is asked to do (input).
+    this.logLlmInput(label, primary.name, systemPrompt, userContent);
+
     if (primary.available) {
       try {
         const result = await primary.run();
-        this.logger.log(
-          `LLM "${label}" OK via ${primary.name} (${Date.now() - t0} ms)`,
-        );
+        this.logLlmOutput(label, primary.name, result, Date.now() - t0, false);
         return result;
       } catch (primaryErr: any) {
         if (!this.fallbackEnabled || !secondary.available) {
@@ -171,15 +172,56 @@ export class LlmClientService {
     // Reached when primary is unavailable, or primary failed and fallback is on.
     try {
       const result = await secondary.run();
-      this.logger.log(
-        `LLM "${label}" OK via ${secondary.name} (fallback, ${Date.now() - t0} ms)`,
-      );
+      this.logLlmOutput(label, secondary.name, result, Date.now() - t0, true);
       return result;
     } catch (secondaryErr: any) {
       throw new InternalServerErrorException(
         `LLM ${label} failed on all providers — ${secondary.name}: ${secondaryErr?.message}`,
       );
     }
+  }
+
+  // ─── Observability helpers ─────────────────────────────────────────────────
+
+  /** Logs the full prompt the model receives (system + user payload). */
+  private logLlmInput(
+    label: string,
+    provider: LlmProvider,
+    systemPrompt: string,
+    userContent: string,
+  ): void {
+    const model = provider === 'gemini' ? this.geminiModel : this.collegeModel;
+    const totalChars = systemPrompt.length + userContent.length;
+    this.logger.log(
+      `\n┌─ LLM REQUEST [${label}] ────────────────────────────────────────\n` +
+        `│ provider : ${provider}  |  model: ${model}\n` +
+        `│ input    : ${totalChars} chars ` +
+        `(system=${systemPrompt.length}, user=${userContent.length})\n` +
+        `├─ SYSTEM PROMPT ─────────────────────────────────────────────────\n` +
+        `${systemPrompt}\n` +
+        (userContent
+          ? `├─ USER CONTENT ──────────────────────────────────────────────────\n${userContent}\n`
+          : '') +
+        `└─────────────────────────────────────────────────────────────────`,
+    );
+  }
+
+  /** Logs the raw model output plus provider/timing metadata. */
+  private logLlmOutput(
+    label: string,
+    provider: LlmProvider,
+    raw: string,
+    ms: number,
+    fallback: boolean,
+  ): void {
+    this.logger.log(
+      `\n┌─ LLM RESPONSE [${label}] ───────────────────────────────────────\n` +
+        `│ via : ${provider}${fallback ? ' (fallback)' : ''}  |  ` +
+        `${ms} ms  |  ${raw.length} chars\n` +
+        `├─ RAW OUTPUT ────────────────────────────────────────────────────\n` +
+        `${raw}\n` +
+        `└─────────────────────────────────────────────────────────────────`,
+    );
   }
 
   // ─── College LLM execution ────────────────────────────────────────────────
@@ -204,9 +246,6 @@ export class LlmClientService {
           this.collegeApi === 'openai'
             ? await this.callCollegeOpenAi(systemPrompt, userContent)
             : await this.callCollegeOllama(systemPrompt, userContent);
-        this.logger.debug(
-          `College LLM (${this.collegeModel}, ${label}) raw response: ${rawText}`,
-        );
         return rawText;
       } catch (err: any) {
         lastErr = err;
@@ -316,7 +355,6 @@ export class LlmClientService {
       try {
         const result = await model.generateContent(prompt);
         const rawText = (await result.response).text();
-        this.logger.debug(`Gemini (${label}) raw response: ${rawText}`);
         return rawText;
       } catch (err: any) {
         lastErr = err;

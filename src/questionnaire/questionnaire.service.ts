@@ -11,10 +11,8 @@ export class QuestionnaireService {
   ) {}
 
   async submit(userId: string, answers: {
-    age?: number;
     riskTolerance?: string;
     knowledgeLevel?: string;
-    occupation?: string;
   }) {
     let profile = await this.profileRepo.findOne({ where: { userId } });
     if (!profile) {
