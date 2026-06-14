@@ -11,12 +11,16 @@ import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
+import { FinancialAnalysisModule } from '../financial-analysis/financial-analysis.module.js';
+import { EventDetectionModule } from '../event-detection/event-detection.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([BankConsent, BankToken, RoadmapStep, RoadmapGoal, UserProfile, UserProfileHistory]),
     // Store uploaded files in memory so we can access file.buffer in the service.
     MulterModule.register({ storage: memoryStorage() }),
+    FinancialAnalysisModule,
+    EventDetectionModule,
   ],
   controllers: [OpenFinanceController],
   providers: [OpenFinanceService, OpenFinanceApiService],

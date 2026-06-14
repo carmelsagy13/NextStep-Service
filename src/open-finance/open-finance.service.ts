@@ -18,9 +18,12 @@ import {
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
+import { extractFeatures } from './financial-report.extractor.js';
+import { FinancialFeatures } from './financial-features.model.js';
+import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
+import { EventDetectionService } from '../event-detection/event-detection.service.js';
 
 export interface AiCriteriaProfile {
-  current_step: number;
   cash_flow: number;
   credit_consumption: number;
   loans: number;
@@ -112,6 +115,8 @@ export class OpenFinanceService {
     private readonly historyRepo: Repository<UserProfileHistory>,
     private readonly dataSource: DataSource,
     private readonly llm: LlmClientService,
+    private readonly financialAnalysis: FinancialAnalysisService,
+    private readonly eventDetection: EventDetectionService,
   ) {}
 
   async connect(body: any) {
@@ -177,8 +182,25 @@ export class OpenFinanceService {
       );
     }
 
-    // 2. Deterministic preprocessing — token diet.
-    const summaryJson = this.preprocessBankingData(bankingData);
+    // 2. Deterministic feature extraction from the aggregated Open Finance
+    //    report. Replaces the old transactions-based preprocessing — the real
+    //    payload is an aggregated report, not a flat transactions list.
+    const features: FinancialFeatures = extractFeatures(bankingData);
+    const summaryJson = JSON.stringify(features);
+
+    // 2a. Persist the raw snapshot and detect data-backed events. These run in
+    //     parallel with the LLM round-trips below; they don't block them.
+    const sideEffects = Promise.all([
+      this.financialAnalysis.persistSnapshot(userId, features),
+      this.eventDetection.detectEvents(userId, features),
+    ]).catch((err) => {
+      // Snapshot/event persistence is non-critical to the analysis result.
+      this.logger.warn(
+        `Snapshot/event persistence failed — userId=${userId}: ${String(
+          err?.message,
+        ).slice(0, 160)}`,
+      );
+    });
 
     // 2b. Load the user's existing state & task history in PARALLEL with the LLM
     //     calls. It is only consumed by the reconciliation step, so there is no
@@ -220,6 +242,9 @@ export class OpenFinanceService {
         JSON.stringify(clientResponse, null, 2),
     );
 
+    // Ensure snapshot/event persistence has settled before responding.
+    await sideEffects;
+
     const __elapsed = Date.now() - __t0;
     this.logger.log(
       `analyzeBankingJson END — userId=${userId} took ${__elapsed} ms ` +
@@ -227,151 +252,6 @@ export class OpenFinanceService {
     );
 
     return clientResponse;
-  }
-
-  // ─── TASK 1: Deterministic Data Aggregation ────────────────────────────────
-
-  private preprocessBankingData(rawData: unknown): string {
-    if (
-      rawData == null ||
-      (typeof rawData === 'object' &&
-        !Array.isArray(rawData) &&
-        Object.keys(rawData as object).length === 0)
-    ) {
-      return JSON.stringify({
-        metrics: {
-          totalMonthlyIncome: 0,
-          totalMonthlyExpenses: 0,
-          totalMonthlySavingsInvestments: 0,
-          totalMonthlyDebtPayments: 0,
-          netCashFlow: 0,
-          discretionarySurplus: 0,
-          savingsRate: 0,
-          currentBalance: 0,
-        },
-        aggregatedCategories: [],
-        highImpactTransactions: [],
-      });
-    }
-
-    const data = rawData as Record<string, any>;
-    const transactions: Array<Record<string, any>> = Array.isArray(
-      data.transactions,
-    )
-      ? data.transactions
-      : Array.isArray(data)
-        ? (data as any[])
-        : [];
-
-    // Calculate financial metrics
-    let totalMonthlyIncome = 0;
-    let totalMonthlyExpenses = 0;
-    // Money intentionally directed toward wealth-building (NOT a living cost).
-    let totalMonthlySavingsInvestments = 0;
-    // Loan / mortgage repayments (debt servicing, tracked separately).
-    let totalMonthlyDebtPayments = 0;
-    const currentBalance: number =
-      typeof data.balance === 'number'
-        ? data.balance
-        : typeof data.currentBalance === 'number'
-          ? data.currentBalance
-          : 0;
-
-    // Outflows that build net worth rather than consume it — these must NOT be
-    // counted as expenses, otherwise a disciplined investor looks cash-negative.
-    const SAVINGS_INVEST_KEYWORDS =
-      /invest|pension|saving|provident|gemel|securities|stock|etf|fund|deposit|השקע|פנסי|חיסכו|חסכו|גמל|השתלמות|ניירות ערך|מניות|קרן סל|קרן נאמנות|פיקדון|חיסכון/i;
-    // Debt servicing — informative but distinct from discretionary spending.
-    const DEBT_KEYWORDS =
-      /loan|mortgage|repayment|הלוואה|משכנתא|החזר הלוואה|החזר משכנתא/i;
-    const HIGH_IMPACT_KEYWORDS =
-      /loan|הלוואה|mortgage|משכנתא|overdraft|מינוס|עמלה|invest|השקע|pension|פנסי|גמל|השתלמות/i;
-    const HIGH_AMOUNT_THRESHOLD = 1000;
-
-    const highImpactTransactions: Array<Record<string, any>> = [];
-    const categoryBuckets = new Map<string, { sum: number; count: number }>();
-
-    for (const tx of transactions) {
-      const amount =
-        typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
-      const absAmount = Math.abs(amount);
-      const description: string = tx.description ?? tx.memo ?? tx.name ?? '';
-      const category: string = tx.category ?? tx.type ?? 'uncategorized';
-      const haystack = `${category} ${description}`;
-
-      // Income vs outflow classification. Outflows are split into three buckets
-      // so the LLM can tell consumption apart from wealth-building and debt.
-      if (amount > 0) {
-        totalMonthlyIncome += amount;
-      } else if (SAVINGS_INVEST_KEYWORDS.test(haystack)) {
-        totalMonthlySavingsInvestments += absAmount;
-      } else if (DEBT_KEYWORDS.test(haystack)) {
-        totalMonthlyDebtPayments += absAmount;
-      } else {
-        totalMonthlyExpenses += absAmount;
-      }
-
-      // High-impact retention: keep raw if amount > threshold or keyword match
-      const isHighAmount = absAmount > HIGH_AMOUNT_THRESHOLD;
-      const isKeywordMatch =
-        HIGH_IMPACT_KEYWORDS.test(description) ||
-        HIGH_IMPACT_KEYWORDS.test(category);
-
-      if (isHighAmount || isKeywordMatch) {
-        highImpactTransactions.push(tx);
-      } else {
-        // Aggregate low-value transactions by category
-        const bucket = categoryBuckets.get(category);
-        if (bucket) {
-          bucket.sum += absAmount;
-          bucket.count += 1;
-        } else {
-          categoryBuckets.set(category, { sum: absAmount, count: 1 });
-        }
-      }
-    }
-
-    // Format aggregated categories
-    const aggregatedCategories: string[] = [];
-    for (const [cat, { sum, count }] of categoryBuckets) {
-      aggregatedCategories.push(
-        `${cat}: ${Math.round(sum)} ILS across ${count} transactions`,
-      );
-    }
-
-    // Derived health indicators.
-    // discretionarySurplus = what's left after living costs + debt, BEFORE voluntary
-    //   saving/investing. Positive here means the user can afford to build wealth.
-    // netCashFlow = actual change in liquid cash after everything (incl. investing).
-    //   It can be negative for a healthy investor who deploys their surplus.
-    const discretionarySurplus =
-      totalMonthlyIncome - totalMonthlyExpenses - totalMonthlyDebtPayments;
-    const netCashFlow = discretionarySurplus - totalMonthlySavingsInvestments;
-    const savingsRate =
-      totalMonthlyIncome > 0
-        ? Math.round(
-            (totalMonthlySavingsInvestments / totalMonthlyIncome) * 100,
-          )
-        : 0;
-
-    const summary = {
-      metrics: {
-        totalMonthlyIncome: Math.round(totalMonthlyIncome),
-        totalMonthlyExpenses: Math.round(totalMonthlyExpenses),
-        totalMonthlySavingsInvestments: Math.round(
-          totalMonthlySavingsInvestments,
-        ),
-        totalMonthlyDebtPayments: Math.round(totalMonthlyDebtPayments),
-        netCashFlow: Math.round(netCashFlow),
-        discretionarySurplus: Math.round(discretionarySurplus),
-        savingsRate,
-        currentBalance: Math.round(currentBalance),
-      },
-      aggregatedCategories,
-      highImpactTransactions,
-    };
-
-    return JSON.stringify(summary);
   }
 
   // ─── TASK 2 & 3: 2-Wave LLM Pipeline with Validation ─────────────────────
@@ -396,17 +276,20 @@ export class OpenFinanceService {
 
     const systemPrompt = [
       'You are an expert Israeli financial analyst.',
-      'Evaluate the user financial summary below and return a JSON object representing their profile.',
+      'Evaluate the user financial features below and return a JSON object representing their profile.',
       '',
-      '## How to read the metrics block',
-      '- totalMonthlyIncome: all incoming money (salary, dividends, interest).',
-      '- totalMonthlyExpenses: TRUE living/consumption costs only (rent, groceries, utilities, leisure).',
-      '- totalMonthlySavingsInvestments: money the user DELIBERATELY moves into wealth-building (investments, pension, provident funds, savings). This is a STRENGTH, never a deficit or a problem.',
-      '- totalMonthlyDebtPayments: loan/mortgage servicing.',
-      '- discretionarySurplus = income - expenses - debt. This is the real cash-flow health signal: POSITIVE means the user lives within their means and can build wealth.',
-      '- netCashFlow = discretionarySurplus - savingsInvestments. A NEGATIVE netCashFlow combined with a POSITIVE discretionarySurplus is HEALTHY — it means the user is investing their surplus, not overspending. Do NOT treat this as financial distress.',
-      '- savingsRate: % of income directed to savings/investments. Higher = more advanced.',
-      'Judge cash_flow on discretionarySurplus (and expenses vs income), NOT on netCashFlow. Reward high savingsRate and active investing/pension when scoring savings_investments and pension_long_term.',
+      '## How to read the financial features block (all amounts in ILS, monthly unless noted)',
+      '- currentBalance: total liquid balance across all checking accounts.',
+      '- monthlyIncome / monthlyExpenses: provider-aggregated average monthly income and spending.',
+      '- monthlyNetCashFlow: provider-reported income minus expenses per month.',
+      '- discretionarySurplus = monthlyIncome - monthlyExpenses. POSITIVE means the user lives within their means and can build wealth.',
+      '- savingsRate: % of monthly income left as surplus. Higher = more capacity to save/invest.',
+      '- monthsCovered / avgMonthlyIncome / avgMonthlyExpense / deficitMonthsCount: the multi-month trend. deficitMonthsCount = number of months where expense exceeded income.',
+      '- totalSavings / totalSecuritiesValue / totalInvestments / securitiesCount: accumulated wealth. A LARGE totalInvestments is a STRENGTH, never a deficit, and points to the higher stages.',
+      '- totalLoans / totalMortgage / totalDebt / hasActiveLoans / hasMortgage: outstanding debt.',
+      '- activeCreditCardsCount / avgMonthlyCreditCardSpend / creditCardFeesTotal: credit-card usage.',
+      '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount, akamCount, cancelledCount): BDI distress counters. Any non-zero value signals instability — score system_indicators lower.',
+      'Judge cash_flow on discretionarySurplus and the deficitMonthsCount trend. Reward high totalInvestments / savingsRate when scoring savings_investments and pension_long_term. Score loans/mortgage from totalDebt, and system_indicators worse when systemFlags are non-zero.',
       '',
       '## 8 Granular Financial Criteria — Stage Definitions',
       criteriaByStageSection,
@@ -417,7 +300,6 @@ export class OpenFinanceService {
       '',
       '## Required Output Schema (flat JSON object):',
       JSON.stringify({
-        current_step: '<integer 1–5, weighted synthesis>',
         cash_flow: '<integer 1–5>',
         credit_consumption: '<integer 1–5>',
         loans: '<integer 1–5>',
@@ -547,7 +429,7 @@ export class OpenFinanceService {
           .join('\n\n')
       : '  (user has no existing tasks — this is a first assessment)';
 
-    const priorStep = context.currentState?.currentStepId ?? null;
+    const priorStep = context.currentProfile?.currentStep ?? null;
     const priorProgress = context.currentState?.progressPercent ?? null;
 
     const historySection = context.history.length
@@ -569,11 +451,11 @@ export class OpenFinanceService {
       "2) RECONCILE the user's existing tasks against that determined stage and",
       '   return an ID-based reconciliation diff.',
       '',
-      '## How to read the metrics block',
-      '- totalMonthlyExpenses is TRUE living costs only. Money in totalMonthlySavingsInvestments (investments, pension, savings) is wealth-building, NOT spending.',
-      '- discretionarySurplus = income - expenses - debt. POSITIVE = healthy cash flow. Judge cash flow on THIS, not on netCashFlow.',
-      '- A NEGATIVE netCashFlow with a POSITIVE discretionarySurplus is HEALTHY: the user is deploying surplus into wealth-building. NEVER classify such a user as Stage 1 and NEVER describe it as a "negative cash flow" or deficit.',
-      '- Active investing + pension + high savingsRate point toward the HIGHER stages (4–5).',
+      '## How to read the financial features block (all amounts in ILS, monthly unless noted)',
+      '- discretionarySurplus = monthlyIncome - monthlyExpenses. POSITIVE = healthy cash flow; a comfortable surplus is a STRENGTH.',
+      '- A large totalInvestments / totalSecuritiesValue is wealth-building and a STRENGTH — never describe it as a deficit. Such users point toward the HIGHER stages (4–5).',
+      '- deficitMonthsCount across monthsCovered shows cash-flow stability; more deficit months ⇒ weaker cash flow.',
+      '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount) non-zero ⇒ instability/distress.',
       '',
       '## Financial Stage Definitions',
       stagesSection,
@@ -591,6 +473,7 @@ export class OpenFinanceService {
       '- Put tasks that are no longer relevant (e.g. left over from a previous step) into "remove".',
       '- Put tasks the data shows are achieved into "complete".',
       '- Only "add" templates that are genuinely relevant and not already assigned.',
+      '- When adding a goal, fill dynamic_params with REAL numbers taken from the financial features block (e.g. surplus, currentBalance, activeCreditCardsCount, totalInvestments). NEVER invent figures; if a value is not derivable from the features, use null.',
       '',
       `## User's Current Pyramid Level: ${priorStep ?? 'unknown'} (progress ${priorProgress ?? 0}%)`,
       '',
@@ -683,11 +566,13 @@ export class OpenFinanceService {
     };
   }
 
-  /** Coerce all integer criteria fields to numbers, clamp to 1–5, and keep strings as strings. */
+  /**
+   * Coerce all criteria fields to numbers clamped to 1–5 (defaulting to 1) so a
+   * malformed LLM payload can never persist an out-of-range score.
+   */
   private normalizeCriteriaProfile(raw: any): AiCriteriaProfile {
     const clamp = (v: any) => Math.min(5, Math.max(1, Number(v) || 1));
     return {
-      current_step: clamp(raw?.current_step),
       cash_flow: clamp(raw?.cash_flow),
       credit_consumption: clamp(raw?.credit_consumption),
       loans: clamp(raw?.loans),
@@ -730,7 +615,7 @@ export class OpenFinanceService {
         .map((g) => g.goalId),
     );
 
-    const priorStep = params.context.currentState?.currentStepId ?? null;
+    const priorStep = params.context.currentProfile?.currentStep ?? null;
     const priorProgress = params.context.currentState?.progressPercent ?? null;
     const newProgress = params.roadmapState.progress_percentage;
 
@@ -742,7 +627,6 @@ export class OpenFinanceService {
       if (!state) {
         state = manager.create(RoadmapState, { userId });
       }
-      state.currentStepId = currentStep;
       state.progressPercent = newProgress;
       state.stateDescription = params.roadmapState.state_description;
       const savedState = await manager.save(RoadmapState, state);
@@ -752,7 +636,7 @@ export class OpenFinanceService {
       if (!profile) {
         profile = manager.create(UserProfile, { userId });
       }
-      profile.currentStep = p.current_step;
+      profile.currentStep = currentStep;
       profile.cashFlow = p.cash_flow;
       profile.creditConsumption = p.credit_consumption;
       profile.loans = p.loans;

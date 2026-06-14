@@ -185,7 +185,7 @@ export class LlmOrchestratorService {
         `kept=${safe.length}${dropped > 0 ? ` droppedInvalid=${dropped}` : ''}`,
     );
 
-    return safe.map((r: any) => ({
+    const result = safe.map((r: any) => ({
       roadmap_goal_id: r.roadmap_goal_id,
       title:
         r.title ??
@@ -195,6 +195,10 @@ export class LlmOrchestratorService {
       ai_insight: r.ai_insight ?? '',
       dynamic_params: r.dynamic_params ?? {},
     }));
+
+    await this.persistGuidanceLog(profile, filteredGoals, result);
+
+    return result;
   }
 
   // ─── Private AI helpers ───────────────────────────────────────────────────
@@ -204,20 +208,55 @@ export class LlmOrchestratorService {
     return this.llm.sanitizeJson(raw);
   }
 
-  // ─── Legacy compatibility ─────────────────────────────────────────────────
+  /**
+   * Records the AI guidance produced for a user into llm_guidance_logs.
+   * Stores the decision context (financial criteria + step + candidate goals)
+   * alongside the personalized recommendations the model returned, so guidance
+   * is auditable and reproducible. Failures are non-fatal to the request.
+   */
+  private async persistGuidanceLog(
+    profile: UserProfile,
+    filteredGoals: RoadmapGoal[],
+    recommendations: PersonalizedGoalRecommendation[],
+  ): Promise<void> {
+    try {
+      const contextSnapshot = {
+        current_step: profile.currentStep,
+        criteria: {
+          cash_flow: profile.cashFlow,
+          credit_consumption: profile.creditConsumption,
+          loans: profile.loans,
+          savings_investments: profile.savingsInvestments,
+          pension_long_term: profile.pensionLongTerm,
+          lifestyle_clubs: profile.lifestyleClubs,
+          mortgage: profile.mortgage,
+          system_indicators: profile.systemIndicators,
+          risk_tolerance: profile.riskTolerance,
+          knowledge_level: profile.knowledgeLevel,
+        },
+        candidate_goal_ids: filteredGoals.map((g) => g.goalId),
+        recommendations,
+      };
 
-  async generateGuidance(
-    userId: string,
-    context: { questionnaire: any; goals: any[]; snapshot: any },
-  ) {
-    const guidanceText =
-      'Use GET /goals/recommended for AI-powered step-isolated recommendations.';
-    const log = this.logRepo.create({
-      userId,
-      contextSnapshot: context,
-      guidanceText,
-    });
-    await this.logRepo.save(log);
-    return { stage: 1, recommendation: guidanceText, suggestedGoals: [] };
+      const guidanceText = recommendations
+        .map((r, i) => `${i + 1}. [${r.title}] ${r.ai_insight}`)
+        .join('\n');
+
+      const log = this.logRepo.create({
+        userId: profile.userId,
+        contextSnapshot,
+        guidanceText,
+      });
+      await this.logRepo.save(log);
+      this.logger.log(
+        `[GuidanceLog] saved logId=${log.logId} userId=${profile.userId} ` +
+          `recommendations=${recommendations.length}`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[GuidanceLog] failed to persist guidance for userId=${profile.userId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
