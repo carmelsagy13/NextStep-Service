@@ -1,25 +1,493 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { UserProfile } from '../database/entities/user-profile.entity.js';
+import { QuestionnaireScreen } from '../database/entities/questionnaire-screen.entity.js';
+import { QuestionnaireQuestion } from '../database/entities/questionnaire-question.entity.js';
+import { QuestionnaireDependency } from '../database/entities/questionnaire-dependency.entity.js';
+import { QuestionnaireSubmission } from '../database/entities/questionnaire-submission.entity.js';
+import { QuestionnaireResponse } from '../database/entities/questionnaire-response.entity.js';
+import {
+  AnswerValue,
+  DependencyOperator,
+  LocalizedText,
+  QuestionType,
+  QuestionValidation,
+  SubmissionStatus,
+} from '../database/entities/questionnaire.types.js';
+import { RespondQuestionnaireDto } from './dto/respond-questionnaire.dto.js';
+
+/** A dependency rule projected with the trigger's stable key for the client. */
+export interface SerializedDependency {
+  triggerQuestionKey: string;
+  operator: DependencyOperator;
+  value: AnswerValue | null;
+  group: number;
+}
+
+export interface SerializedQuestion {
+  questionKey: string;
+  type: QuestionType;
+  isRequired: boolean;
+  orderIndex: number;
+  text: LocalizedText;
+  validation: QuestionValidation | null;
+  options: Array<{ value: string; label: LocalizedText; orderIndex: number }>;
+  /** Visibility rules for THIS question (empty = always visible). */
+  dependencies: SerializedDependency[];
+  /** Nested conditional sub-fields. */
+  children: SerializedQuestion[];
+}
+
+export interface SerializedScreen {
+  screenKey: string;
+  orderIndex: number;
+  title: LocalizedText;
+  subtitle: LocalizedText | null;
+  questions: SerializedQuestion[];
+}
+
+/** A single answer projected for LLM/analytics consumption. */
+export interface QuestionnaireAnswerView {
+  questionKey: string;
+  /** Hebrew question text. */
+  question: string;
+  /**
+   * The answer in human-readable form: choice values are resolved to their
+   * Hebrew option labels; numbers/texts pass through unchanged.
+   */
+  answer: string | string[] | number;
+}
+
+/** The user's most recent completed questionnaire pass, flattened for prompts. */
+export interface QuestionnaireSummary {
+  version: number;
+  submittedAt: Date | null;
+  answers: QuestionnaireAnswerView[];
+}
+
+/** Field-level validation failure surfaced to the caller. */
+interface ResponseError {
+  questionKey: string;
+  message: string;
+}
+
+/**
+ * Builds the questionnaire block appended to LLM system prompts. Centralized so
+ * the general explanation of what this data represents stays consistent across
+ * every call site. Returns an empty string when the user has no submission, so
+ * callers can append it unconditionally.
+ */
+export function buildQuestionnairePromptSection(
+  summary: QuestionnaireSummary | null,
+): string {
+  if (!summary || summary.answers.length === 0) return '';
+
+  return [
+    '',
+    '## Self-Reported Onboarding Questionnaire',
+    'The user answered an onboarding questionnaire capturing OFF-PLATFORM context',
+    'that the connected bank data cannot see — e.g. accounts at other banks,',
+    'non-bank credit cards, off-platform savings/pension (study funds, provident,',
+    'pension), investment real-estate, loans taken outside the bank, large annual',
+    'expenses, and the user\'s own declared financial goals.',
+    'Use these answers to COMPLEMENT the bank-derived figures and refine your',
+    'assessment where the bank data is blind. The connected bank data remains',
+    'authoritative for on-platform balances and cash flow — do NOT double-count an',
+    'item that already appears in the financial features. Answers are in Hebrew.',
+    JSON.stringify(summary.answers, null, 2),
+  ].join('\n');
+}
 
 @Injectable()
 export class QuestionnaireService {
   constructor(
-    @InjectRepository(UserProfile)
-    private readonly profileRepo: Repository<UserProfile>,
+    @InjectRepository(QuestionnaireScreen)
+    private readonly screenRepo: Repository<QuestionnaireScreen>,
+    @InjectRepository(QuestionnaireQuestion)
+    private readonly questionRepo: Repository<QuestionnaireQuestion>,
+    @InjectRepository(QuestionnaireSubmission)
+    private readonly submissionRepo: Repository<QuestionnaireSubmission>,
+    @InjectRepository(QuestionnaireResponse)
+    private readonly responseRepo: Repository<QuestionnaireResponse>,
   ) {}
 
-  async submit(userId: string, answers: {
-    riskTolerance?: string;
-    knowledgeLevel?: string;
-  }) {
-    let profile = await this.profileRepo.findOne({ where: { userId } });
-    if (!profile) {
-      profile = this.profileRepo.create({ userId });
+  // ──────────────────────────────────────────────────────────────────────
+  // GET /questionnaire — render-ready, ordered, nested structure
+  // ──────────────────────────────────────────────────────────────────────
+  async getStructure(): Promise<{ screens: SerializedScreen[] }> {
+    const [screens, questions] = await Promise.all([
+      this.screenRepo.find({ where: { isActive: true }, order: { orderIndex: 'ASC' } }),
+      this.questionRepo.find({
+        where: { isActive: true },
+        relations: { options: true, dependencies: true },
+        order: { orderIndex: 'ASC' },
+      }),
+    ]);
+
+    const idToKey = new Map<string, string>(
+      questions.map((q) => [q.questionId, q.questionKey]),
+    );
+
+    const childrenByParent = new Map<string, QuestionnaireQuestion[]>();
+    const topLevelByScreen = new Map<string, QuestionnaireQuestion[]>();
+    for (const question of questions) {
+      if (question.parentQuestionId) {
+        const list = childrenByParent.get(question.parentQuestionId) ?? [];
+        list.push(question);
+        childrenByParent.set(question.parentQuestionId, list);
+      } else {
+        const list = topLevelByScreen.get(question.screenId) ?? [];
+        list.push(question);
+        topLevelByScreen.set(question.screenId, list);
+      }
     }
-    Object.assign(profile, answers);
-    await this.profileRepo.save(profile);
-    return { message: 'Questionnaire submitted', profile };
+
+    const serializeQuestion = (q: QuestionnaireQuestion): SerializedQuestion => ({
+      questionKey: q.questionKey,
+      type: q.type,
+      isRequired: q.isRequired,
+      orderIndex: q.orderIndex,
+      text: q.text,
+      validation: q.validation ?? null,
+      options: (q.options ?? [])
+        .filter((o) => o.isActive)
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .map((o) => ({ value: o.optionValue, label: o.label, orderIndex: o.orderIndex })),
+      dependencies: (q.dependencies ?? [])
+        .filter((d) => d.isActive)
+        .sort((a, b) => a.groupIndex - b.groupIndex)
+        .map((d) => ({
+          triggerQuestionKey: idToKey.get(d.triggerQuestionId) ?? '',
+          operator: d.operator,
+          value: d.triggerValue,
+          group: d.groupIndex,
+        })),
+      children: (childrenByParent.get(q.questionId) ?? [])
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .map(serializeQuestion),
+    });
+
+    return {
+      screens: screens.map((screen) => ({
+        screenKey: screen.screenKey,
+        orderIndex: screen.orderIndex,
+        title: screen.title,
+        subtitle: screen.subtitle ?? null,
+        questions: (topLevelByScreen.get(screen.screenId) ?? [])
+          .sort((a, b) => a.orderIndex - b.orderIndex)
+          .map(serializeQuestion),
+      })),
+    };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // POST /questionnaire/respond — validate against the live schema & persist
+  // ──────────────────────────────────────────────────────────────────────
+  async respond(userId: string, dto: RespondQuestionnaireDto) {
+    const questions = await this.questionRepo.find({
+      where: { isActive: true },
+      relations: { options: true, dependencies: true },
+    });
+
+    const byKey = new Map<string, QuestionnaireQuestion>(
+      questions.map((q) => [q.questionKey, q]),
+    );
+    const byId = new Map<string, QuestionnaireQuestion>(
+      questions.map((q) => [q.questionId, q]),
+    );
+
+    // Normalize incoming answers into a key→value map.
+    const answers = new Map<string, AnswerValue>();
+    for (const item of dto.answers) {
+      answers.set(item.questionKey, item.value);
+    }
+
+    const errors: ResponseError[] = [];
+
+    // 1) Reject unknown keys and answers for currently-hidden questions.
+    for (const item of dto.answers) {
+      const question = byKey.get(item.questionKey);
+      if (!question) {
+        errors.push({ questionKey: item.questionKey, message: 'Unknown or inactive question.' });
+        continue;
+      }
+      if (!this.isVisible(question, byId, byKey, answers)) {
+        errors.push({
+          questionKey: item.questionKey,
+          message: 'Answer provided for a question that is not currently visible.',
+        });
+        continue;
+      }
+      const typeError = this.validateAnswerType(question, item.value);
+      if (typeError) errors.push({ questionKey: item.questionKey, message: typeError });
+    }
+
+    // 2) Enforce required-ness for every currently-visible question.
+    for (const question of questions) {
+      if (!question.isRequired) continue;
+      if (!this.isVisible(question, byId, byKey, answers)) continue;
+      if (this.isEmpty(answers.get(question.questionKey))) {
+        errors.push({ questionKey: question.questionKey, message: 'This question is required.' });
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new BadRequestException({ message: 'Questionnaire validation failed', errors });
+    }
+
+    // 3) Persist: one submission header + per-answer upsert (visible answers only).
+    const lastVersion = await this.submissionRepo
+      .createQueryBuilder('s')
+      .select('MAX(s.version)', 'max')
+      .where('s.user_id = :userId', { userId })
+      .getRawOne<{ max: number | null }>();
+
+    const submission = await this.submissionRepo.save(
+      this.submissionRepo.create({
+        userId,
+        version: (lastVersion?.max ?? 0) + 1,
+        status: SubmissionStatus.SUBMITTED,
+        submittedAt: new Date(),
+      }),
+    );
+
+    let persisted = 0;
+    for (const item of dto.answers) {
+      const question = byKey.get(item.questionKey)!;
+      if (!this.isVisible(question, byId, byKey, answers)) continue;
+      if (this.isEmpty(item.value)) continue;
+
+      await this.responseRepo.upsert(
+        {
+          userId,
+          questionId: question.questionId,
+          submissionId: submission.submissionId,
+          answerValue: this.normalizeAnswer(question, item.value),
+        },
+        { conflictPaths: ['userId', 'questionId'] },
+      );
+      persisted += 1;
+    }
+
+    return {
+      message: 'Questionnaire submitted',
+      submissionId: submission.submissionId,
+      version: submission.version,
+      persistedAnswers: persisted,
+    };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Latest-submission summary — consumed by the LLM pipelines
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the user's most recent SUBMITTED questionnaire pass as a flat,
+   * human-readable list of answers (choice values resolved to Hebrew labels),
+   * or `null` when the user has never completed the questionnaire.
+   *
+   * Answers are scoped to a single submission id, so conditionally-revealed
+   * sub-fields belonging to that pass are naturally included and stale answers
+   * from older passes are excluded.
+   */
+  async buildLatestSummary(
+    userId: string,
+  ): Promise<QuestionnaireSummary | null> {
+    const submission = await this.submissionRepo.findOne({
+      where: { userId, status: SubmissionStatus.SUBMITTED },
+      order: { version: 'DESC' },
+    });
+    if (!submission) return null;
+
+    const responses = await this.responseRepo.find({
+      where: { submissionId: submission.submissionId },
+      relations: { question: { options: true } },
+    });
+
+    const answers: QuestionnaireAnswerView[] = responses
+      .filter((r) => r.question)
+      .sort((a, b) => a.question.orderIndex - b.question.orderIndex)
+      .map((r) => ({
+        questionKey: r.question.questionKey,
+        question: r.question.text.he,
+        answer: this.toReadableAnswer(r.question, r.answerValue),
+      }));
+
+    return {
+      version: submission.version,
+      submittedAt: submission.submittedAt,
+      answers,
+    };
+  }
+
+  /** Resolves choice values to Hebrew option labels; passes numbers/text through. */
+  private toReadableAnswer(
+    question: QuestionnaireQuestion,
+    value: AnswerValue,
+  ): string | string[] | number {
+    const labelOf = (optionValue: string): string => {
+      const option = (question.options ?? []).find(
+        (o) => o.optionValue === optionValue,
+      );
+      return option?.label.he ?? optionValue;
+    };
+
+    if (
+      question.type === QuestionType.SINGLE_CHOICE &&
+      typeof value === 'string'
+    ) {
+      return labelOf(value);
+    }
+    if (question.type === QuestionType.MULTIPLE_CHOICE && Array.isArray(value)) {
+      return value.map(labelOf);
+    }
+    return value;
+  }
+
+  // ── Visibility resolution ─────────────────────────────────────────────
+
+  /**
+   * A question is visible when its parent (if any) is visible AND its own
+   * dependency rules are satisfied. Rules sharing a group are AND-ed; separate
+   * groups are OR-ed. No active rules → visible by default.
+   */
+  private isVisible(
+    question: QuestionnaireQuestion,
+    byId: Map<string, QuestionnaireQuestion>,
+    byKey: Map<string, QuestionnaireQuestion>,
+    answers: Map<string, AnswerValue>,
+  ): boolean {
+    if (question.parentQuestionId) {
+      const parent = byId.get(question.parentQuestionId);
+      if (parent && !this.isVisible(parent, byId, byKey, answers)) return false;
+    }
+
+    const rules = (question.dependencies ?? []).filter((d) => d.isActive);
+    if (rules.length === 0) return true;
+
+    const groups = new Map<number, QuestionnaireDependency[]>();
+    for (const rule of rules) {
+      const list = groups.get(rule.groupIndex) ?? [];
+      list.push(rule);
+      groups.set(rule.groupIndex, list);
+    }
+
+    // OR across groups, AND within a group.
+    for (const groupRules of groups.values()) {
+      const groupSatisfied = groupRules.every((rule) =>
+        this.evaluateRule(rule, byId, answers),
+      );
+      if (groupSatisfied) return true;
+    }
+    return false;
+  }
+
+  private evaluateRule(
+    rule: QuestionnaireDependency,
+    byId: Map<string, QuestionnaireQuestion>,
+    answers: Map<string, AnswerValue>,
+  ): boolean {
+    const trigger = byId.get(rule.triggerQuestionId);
+    if (!trigger) return false;
+    const answer = answers.get(trigger.questionKey);
+
+    switch (rule.operator) {
+      case DependencyOperator.EQUALS:
+        return answer === rule.triggerValue;
+      case DependencyOperator.NOT_EQUALS:
+        return answer !== rule.triggerValue;
+      case DependencyOperator.INCLUDES:
+        return Array.isArray(answer) && answer.includes(rule.triggerValue as string);
+      case DependencyOperator.GT:
+        return !this.isEmpty(answer) && Number(answer) > Number(rule.triggerValue);
+      case DependencyOperator.LT:
+        return !this.isEmpty(answer) && Number(answer) < Number(rule.triggerValue);
+      case DependencyOperator.EXISTS:
+        return !this.isEmpty(answer);
+      default:
+        return false;
+    }
+  }
+
+  // ── Value validation & normalization ──────────────────────────────────
+
+  /** Returns an error message if the value's shape/content is invalid, else null. */
+  private validateAnswerType(
+    question: QuestionnaireQuestion,
+    value: unknown,
+  ): string | null {
+    const v = question.validation ?? {};
+    const optionValues = new Set(
+      (question.options ?? []).filter((o) => o.isActive).map((o) => o.optionValue),
+    );
+
+    switch (question.type) {
+      case QuestionType.SINGLE_CHOICE: {
+        if (typeof value !== 'string') return 'Expected a single string choice.';
+        if (!optionValues.has(value)) return `"${value}" is not a valid option.`;
+        return null;
+      }
+      case QuestionType.MULTIPLE_CHOICE: {
+        if (!Array.isArray(value)) return 'Expected an array of choices.';
+        if (!value.every((x) => typeof x === 'string')) return 'All choices must be strings.';
+        const invalid = value.find((x) => !optionValues.has(x));
+        if (invalid !== undefined) return `"${invalid}" is not a valid option.`;
+        if (new Set(value).size !== value.length) return 'Duplicate choices are not allowed.';
+        // Count constraints only apply once at least one choice is made; an
+        // empty selection is governed by the required-ness check instead.
+        if (value.length > 0 && v.minItems !== undefined && value.length < v.minItems) {
+          return `Select at least ${v.minItems} option(s).`;
+        }
+        if (v.maxItems !== undefined && value.length > v.maxItems) {
+          return `Select at most ${v.maxItems} option(s).`;
+        }
+        return null;
+      }
+      case QuestionType.NUMBER: {
+        const num = typeof value === 'number' ? value : Number(value);
+        if (typeof value !== 'number' && (value === '' || Number.isNaN(num))) {
+          return 'Expected a number.';
+        }
+        if (Number.isNaN(num)) return 'Expected a number.';
+        if (v.min !== undefined && num < v.min) return `Must be at least ${v.min}.`;
+        if (v.max !== undefined && num > v.max) return `Must be at most ${v.max}.`;
+        return null;
+      }
+      case QuestionType.TEXT: {
+        if (typeof value !== 'string') return 'Expected a text value.';
+        if (v.minLength !== undefined && value.length < v.minLength) {
+          return `Must be at least ${v.minLength} characters.`;
+        }
+        if (v.maxLength !== undefined && value.length > v.maxLength) {
+          return `Must be at most ${v.maxLength} characters.`;
+        }
+        if (v.pattern !== undefined && !new RegExp(v.pattern).test(value)) {
+          return 'Value does not match the required format.';
+        }
+        return null;
+      }
+      default:
+        return 'Unsupported question type.';
+    }
+  }
+
+  /** Coerces NUMBER answers to a number; leaves other types as-is. */
+  private normalizeAnswer(
+    question: QuestionnaireQuestion,
+    value: AnswerValue,
+  ): AnswerValue {
+    if (question.type === QuestionType.NUMBER && typeof value === 'string') {
+      return Number(value);
+    }
+    return value;
+  }
+
+  private isEmpty(value: unknown): boolean {
+    return (
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      (Array.isArray(value) && value.length === 0)
+    );
   }
 }

@@ -12,3 +12,19 @@ export { LlmGuidanceLog } from './llm-guidance-log.entity.js';
 export { NotificationTemplate } from './notification-template.entity.js';
 export { UserNotification } from './user-notification.entity.js';
 export { RoadmapGoal, RoadmapGoalType } from './roadmap-goal.entity.js';
+export { QuestionnaireScreen } from './questionnaire-screen.entity.js';
+export { QuestionnaireQuestion } from './questionnaire-question.entity.js';
+export { QuestionnaireOption } from './questionnaire-option.entity.js';
+export { QuestionnaireDependency } from './questionnaire-dependency.entity.js';
+export { QuestionnaireSubmission } from './questionnaire-submission.entity.js';
+export { QuestionnaireResponse } from './questionnaire-response.entity.js';
+export {
+  QuestionType,
+  DependencyOperator,
+  SubmissionStatus,
+} from './questionnaire.types.js';
+export type {
+  LocalizedText,
+  QuestionValidation,
+  AnswerValue,
+} from './questionnaire.types.js';

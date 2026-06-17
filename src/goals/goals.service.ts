@@ -14,6 +14,7 @@ import {
   LlmOrchestratorService,
   PersonalizedGoalRecommendation,
 } from '../llm-orchestrator/llm-orchestrator.service.js';
+import { QuestionnaireService } from '../questionnaire/questionnaire.service.js';
 
 @Injectable()
 export class GoalsService {
@@ -25,6 +26,7 @@ export class GoalsService {
     @InjectRepository(UserProfile)
     private readonly userProfileRepo: Repository<UserProfile>,
     private readonly llmOrchestrator: LlmOrchestratorService,
+    private readonly questionnaire: QuestionnaireService,
   ) {}
 
   /**
@@ -52,8 +54,12 @@ export class GoalsService {
     }
 
     // ── Step 1: Classification ─────────────────────────────────────────────
+    // The user's latest questionnaire answers (off-platform context) are loaded
+    // once and threaded into BOTH LLM calls to sharpen step classification and
+    // personalization. Resolves to null when onboarding was never completed.
+    const questionnaire = await this.questionnaire.buildLatestSummary(userId);
     process.stdout.write(`\n===== [GoalsService] STEP 1: Classify userId=${userId} =====\n`);
-    const classifiedStep = await this.llmOrchestrator.classifyUserStep(profile);
+    const classifiedStep = await this.llmOrchestrator.classifyUserStep(profile, questionnaire);
     process.stdout.write(`\n===== [GoalsService] STEP 1 RESULT: classifiedStep=${classifiedStep} =====\n`);
 
     // ── Step 2: Hard DB pre-filter (the isolation boundary) ───────────────
@@ -69,7 +75,7 @@ export class GoalsService {
 
     // ── Step 3: Personalization ────────────────────────────────────────────
     process.stdout.write(`\n===== [GoalsService] STEP 3: Personalize ${filteredGoals.length} goals =====\n`);
-    const result = await this.llmOrchestrator.personalizeGoals(profile, filteredGoals);
+    const result = await this.llmOrchestrator.personalizeGoals(profile, filteredGoals, questionnaire);
     process.stdout.write(`\n===== [GoalsService] STEP 3 DONE: returned ${result.length} recommendations =====\n`);
     return result;
   }

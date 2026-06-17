@@ -22,6 +22,11 @@ import { extractFeatures } from './financial-report.extractor.js';
 import { FinancialFeatures } from './financial-features.model.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
 import { EventDetectionService } from '../event-detection/event-detection.service.js';
+import {
+  QuestionnaireService,
+  QuestionnaireSummary,
+  buildQuestionnairePromptSection,
+} from '../questionnaire/questionnaire.service.js';
 
 export interface AiCriteriaProfile {
   cash_flow: number;
@@ -117,6 +122,7 @@ export class OpenFinanceService {
     private readonly llm: LlmClientService,
     private readonly financialAnalysis: FinancialAnalysisService,
     private readonly eventDetection: EventDetectionService,
+    private readonly questionnaire: QuestionnaireService,
   ) {}
 
   async connect(body: any) {
@@ -207,18 +213,25 @@ export class OpenFinanceService {
     //     reason to block the model round-trip on this DB read.
     const contextPromise = this.loadUserContext(userId);
 
+    // 2c. Load the user's most recent questionnaire answers (off-platform
+    //     context the bank data cannot see). Also parallel — feeds both LLM
+    //     calls. Resolves to null when the user has not completed onboarding.
+    const questionnairePromise = this.questionnaire.buildLatestSummary(userId);
+
     // 3. Single LLM round-trip. The focused profile classification runs in
     //    parallel with a MERGED state-determination + reconciliation call. This
     //    collapses the previous two sequential waves (state → reconciliation)
     //    into one, roughly halving the model latency that dominates the request.
+    const questionnaire = await questionnairePromise;
     const [userProfile, { roadmapState, decision }] = await Promise.all([
-      this.callLlmForProfile(summaryJson, stages),
+      this.callLlmForProfile(summaryJson, stages, questionnaire),
       contextPromise.then((ctx) =>
         this.callLlmForStateAndReconciliation(
           summaryJson,
           stages,
           goalTemplates,
           ctx,
+          questionnaire,
         ),
       ),
     ]);
@@ -262,6 +275,7 @@ export class OpenFinanceService {
   private async callLlmForProfile(
     summaryJson: string,
     stages: RoadmapStep[],
+    questionnaire: QuestionnaireSummary | null,
   ): Promise<AiCriteriaProfile> {
     const criteriaByStageSection = stages
       .map((s) =>
@@ -311,6 +325,19 @@ export class OpenFinanceService {
         risk_level: '<string or null>',
         knowledge_level: '<string or null>',
       }),
+      '',
+      '## Mapping questionnaire answers to the 8 criteria',
+      'If the questionnaire block below is present, factor its OFF-PLATFORM items',
+      'into the relevant scores (the bank data cannot see them):',
+      '- loans taken OUTSIDE the bank ⇒ weigh into `loans`.',
+      '- off-platform savings / study funds / provident / pension ⇒ raise',
+      '  `savings_investments` and `pension_long_term` capacity.',
+      '- credit cards from OTHER providers ⇒ factor into `credit_consumption` and',
+      '  `lifestyle_clubs`.',
+      '- investment real-estate / other-bank balances ⇒ added accumulated wealth.',
+      'Treat these as COMPLEMENTARY to the bank features; never double-count an item',
+      'already reflected in the financial features block.',
+      buildQuestionnairePromptSection(questionnaire),
       '',
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
@@ -366,6 +393,7 @@ export class OpenFinanceService {
     stages: RoadmapStep[],
     allGoalTemplates: RoadmapGoal[],
     context: UserReconciliationContext,
+    questionnaire: QuestionnaireSummary | null,
   ): Promise<{
     roadmapState: GeminiAnalysisResult['roadmap_state'];
     decision: ReconciliationDecision;
@@ -524,6 +552,12 @@ export class OpenFinanceService {
           summary: '<Hebrew summary of the change since the last assessment>',
         },
       }),
+      '',
+      'When the questionnaire block below is present, let the user\'s SELF-DECLARED',
+      'goals (e.g. buying a car, wedding, home equity, safety net, early retirement)',
+      'inform task prioritization — but you may still ONLY add goals that exist in',
+      'the determined step\'s task bank. Do not invent tasks from questionnaire goals.',
+      buildQuestionnairePromptSection(questionnaire),
       '',
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');

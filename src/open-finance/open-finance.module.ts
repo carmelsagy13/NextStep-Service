@@ -13,6 +13,7 @@ import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
 import { FinancialAnalysisModule } from '../financial-analysis/financial-analysis.module.js';
 import { EventDetectionModule } from '../event-detection/event-detection.module.js';
+import { QuestionnaireModule } from '../questionnaire/questionnaire.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { EventDetectionModule } from '../event-detection/event-detection.module.
     MulterModule.register({ storage: memoryStorage() }),
     FinancialAnalysisModule,
     EventDetectionModule,
+    QuestionnaireModule,
   ],
   controllers: [OpenFinanceController],
   providers: [OpenFinanceService, OpenFinanceApiService],

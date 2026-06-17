@@ -5,6 +5,10 @@ import { LlmGuidanceLog } from '../database/entities/llm-guidance-log.entity.js'
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
+import {
+  QuestionnaireSummary,
+  buildQuestionnairePromptSection,
+} from '../questionnaire/questionnaire.service.js';
 
 export interface PersonalizedGoalRecommendation {
   roadmap_goal_id: string;
@@ -30,8 +34,14 @@ export class LlmOrchestratorService {
    * Analyzes the user's stored financial profile criteria and returns ONLY an
    * integer 1–5 representing the current financial step. No goal selection occurs
    * in this call — pure classification only.
+   *
+   * `questionnaire`, when provided, supplies self-reported off-platform context
+   * that complements the bank-derived criteria scores.
    */
-  async classifyUserStep(profile: UserProfile): Promise<number> {
+  async classifyUserStep(
+    profile: UserProfile,
+    questionnaire: QuestionnaireSummary | null = null,
+  ): Promise<number> {
     const prompt = [
       'You are a financial classification engine.',
       'Your ONLY task is to determine which financial stage (1–5) this user belongs to.',
@@ -65,6 +75,7 @@ export class LlmOrchestratorService {
       '## Output',
       'Respond EXCLUSIVELY with valid JSON — no markdown, no extra text:',
       '{ "current_step": <integer 1-5> }',
+      buildQuestionnairePromptSection(questionnaire),
     ].join('\n');
 
     const raw = await this.callAi(prompt);
@@ -87,10 +98,14 @@ export class LlmOrchestratorService {
    * goals — it may only reorder and write personalized Hebrew insight text.
    *
    * Returns ALL goals from the input list, sorted by relevance to the user.
+   *
+   * `questionnaire`, when provided, lets the user's self-declared goals and
+   * off-platform context inform prioritization and the Hebrew insight text.
    */
   async personalizeGoals(
     profile: UserProfile,
     filteredGoals: RoadmapGoal[],
+    questionnaire: QuestionnaireSummary | null = null,
   ): Promise<PersonalizedGoalRecommendation[]> {
     const goalList = filteredGoals.map((g) => ({
       roadmap_goal_id: g.goalId,
@@ -153,6 +168,7 @@ export class LlmOrchestratorService {
           2,
         ) +
         ' }',
+      buildQuestionnairePromptSection(questionnaire),
     ].join('\n');
 
     const raw = await this.callAi(prompt);
@@ -196,7 +212,7 @@ export class LlmOrchestratorService {
       dynamic_params: r.dynamic_params ?? {},
     }));
 
-    await this.persistGuidanceLog(profile, filteredGoals, result);
+    await this.persistGuidanceLog(profile, filteredGoals, result, questionnaire);
 
     return result;
   }
@@ -218,6 +234,7 @@ export class LlmOrchestratorService {
     profile: UserProfile,
     filteredGoals: RoadmapGoal[],
     recommendations: PersonalizedGoalRecommendation[],
+    questionnaire: QuestionnaireSummary | null = null,
   ): Promise<void> {
     try {
       const contextSnapshot = {
@@ -235,6 +252,7 @@ export class LlmOrchestratorService {
           knowledge_level: profile.knowledgeLevel,
         },
         candidate_goal_ids: filteredGoals.map((g) => g.goalId),
+        questionnaire: questionnaire ?? null,
         recommendations,
       };
 
