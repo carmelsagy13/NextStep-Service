@@ -15,6 +15,10 @@ import {
   PersonalizedGoalRecommendation,
 } from '../llm-orchestrator/llm-orchestrator.service.js';
 import { QuestionnaireService } from '../questionnaire/questionnaire.service.js';
+import {
+  isRoadmapGoalEligible,
+  criteriaScoresFromProfile,
+} from '../common/roadmap-goal-eligibility.js';
 
 @Injectable()
 export class GoalsService {
@@ -38,8 +42,11 @@ export class GoalsService {
    *   The AI is constrained to ONLY classify — no goal selection.
    *
    * Step 2 – Hard DB Pre-Filter
-   *   Query roadmap_goals WHERE step_id = classifiedStep AND is_active = true.
-   *   This is an absolute boundary: no goals from other steps can leak through.
+   *   Fetch all active roadmap_goals, then filter by eligibility. Goals are
+   *   eligible if either:
+   *     - General goal (criteria = NULL): stepId === classifiedStep
+   *     - Criteria goal: user's score in that criterion >= goal's stepId
+   *   This is an absolute boundary: no ineligible goals can leak through.
    *
    * Step 3 – Personalization (LLM Call 2)
    *   The filtered goal list (and only that list) is sent to the LLM.
@@ -63,11 +70,24 @@ export class GoalsService {
     process.stdout.write(`\n===== [GoalsService] STEP 1 RESULT: classifiedStep=${classifiedStep} =====\n`);
 
     // ── Step 2: Hard DB pre-filter (the isolation boundary) ───────────────
-    const filteredGoals = await this.roadmapGoalRepo.find({
-      where: { stepId: classifiedStep, isActive: true },
+    // Fetch all active goals, then filter by eligibility (general OR criteria-based).
+    const allActiveGoals = await this.roadmapGoalRepo.find({
+      where: { isActive: true },
       order: { priority: 'ASC' },
     });
-    process.stdout.write(`\n===== [GoalsService] STEP 2: DB filter → ${filteredGoals.length} goals for step ${classifiedStep} =====\n`);
+
+    const criteriaScores = criteriaScoresFromProfile(profile);
+    const filteredGoals = allActiveGoals.filter((goal) =>
+      isRoadmapGoalEligible(goal, {
+        currentStep: classifiedStep,
+        criteriaScores,
+      }),
+    );
+
+    process.stdout.write(
+      `\n===== [GoalsService] STEP 2: DB filter → ${filteredGoals.length} eligible goals ` +
+      `(${allActiveGoals.length} total active, classified step=${classifiedStep}) =====\n`,
+    );
 
     if (!filteredGoals.length) {
       return [];
@@ -96,17 +116,31 @@ export class GoalsService {
 
   async createGoal(userId: string, body: any) {
     // Enforce step isolation: if a roadmapGoalId is provided the referenced
-    // roadmap_goal must belong to the user's current step.
+    // roadmap_goal must be eligible for the user (general step match OR
+    // criteria-based eligibility).
     if (body.roadmapGoalId) {
-      const roadmapGoal = await this.roadmapGoalRepo.findOne({
-        where: { goalId: body.roadmapGoalId },
-      });
-      if (!roadmapGoal) throw new NotFoundException('Roadmap goal not found');
+      const [roadmapGoal, profile] = await Promise.all([
+        this.roadmapGoalRepo.findOne({ where: { goalId: body.roadmapGoalId } }),
+        this.userProfileRepo.findOne({ where: { userId } }),
+      ]);
 
-      const currentStep = await this.resolveCurrentStep(userId);
-      if (roadmapGoal.stepId !== currentStep) {
+      if (!roadmapGoal) throw new NotFoundException('Roadmap goal not found');
+      if (!profile) throw new NotFoundException('User profile not found');
+
+      const currentStep = profile.currentStep;
+      if (currentStep === null || currentStep === undefined) {
+        throw new BadRequestException('User has no current step assigned');
+      }
+
+      const criteriaScores = criteriaScoresFromProfile(profile);
+      if (
+        !isRoadmapGoalEligible(roadmapGoal, { currentStep, criteriaScores })
+      ) {
+        const reason = roadmapGoal.criteria
+          ? `Goal requires ${roadmapGoal.criteria} >= ${roadmapGoal.stepId} (user: ${criteriaScores[roadmapGoal.criteria] ?? 'null'})`
+          : `Goal requires step ${roadmapGoal.stepId} (user: ${currentStep})`;
         throw new ForbiddenException(
-          `Goal belongs to step ${roadmapGoal.stepId} but user is on step ${currentStep}. Only goals from the current step can be assigned.`,
+          `Goal is not eligible for this user. ${reason}`,
         );
       }
     }

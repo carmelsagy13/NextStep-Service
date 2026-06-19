@@ -8,7 +8,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
 import { BankToken } from '../database/entities/bank-token.entity.js';
-import { RoadmapStep } from '../database/entities/roadmap-step.entity.js';
+import {
+  RoadmapStep,
+  CriteriaDetail,
+} from '../database/entities/roadmap-step.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { RoadmapState } from '../database/entities/roadmap-state.entity.js';
 import {
@@ -22,6 +25,10 @@ import { extractFeatures } from './financial-report.extractor.js';
 import { FinancialFeatures } from './financial-features.model.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
 import { EventDetectionService } from '../event-detection/event-detection.service.js';
+import {
+  isRoadmapGoalEligible,
+  CriteriaScores,
+} from '../common/roadmap-goal-eligibility.js';
 import {
   QuestionnaireService,
   QuestionnaireSummary,
@@ -272,20 +279,48 @@ export class OpenFinanceService {
   private static readonly STRICT_JSON_SUFFIX =
     'IMPORTANT: Return raw JSON only. Do NOT wrap output in markdown code blocks (```json ... ```), do NOT output preamble or postscript text. Ensure all Hebrew text strings are cleanly escaped as valid UTF-8.';
 
+  /**
+   * Collects the 8 per-criteria JSONB definitions on a roadmap step into a
+   * single keyed object for the LLM prompt. Criteria left empty (null) on a
+   * step are omitted so the model only sees the dimensions actually defined.
+   */
+  private static assembleCriteria(
+    step: RoadmapStep,
+  ): Record<string, CriteriaDetail> {
+    const entries: Array<[string, CriteriaDetail | null]> = [
+      ['cash_flow', step.cashFlow],
+      ['credit_consumption', step.creditConsumption],
+      ['loans', step.loans],
+      ['savings_investments', step.savingsInvestments],
+      ['pension_long_term', step.pensionLongTerm],
+      ['lifestyle_clubs', step.lifestyleClubs],
+      ['mortgage', step.mortgage],
+      ['system_indicators', step.systemIndicators],
+    ];
+    const result: Record<string, CriteriaDetail> = {};
+    for (const [key, value] of entries) {
+      if (value) {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
   private async callLlmForProfile(
     summaryJson: string,
     stages: RoadmapStep[],
     questionnaire: QuestionnaireSummary | null,
   ): Promise<AiCriteriaProfile> {
     const criteriaByStageSection = stages
-      .map((s) =>
-        [
+      .map((s) => {
+        const criteria = OpenFinanceService.assembleCriteria(s);
+        return [
           `### Stage ${s.stepId} – ${s.title}`,
-          s.criteria
-            ? JSON.stringify(s.criteria, null, 2)
+          Object.keys(criteria).length
+            ? JSON.stringify(criteria, null, 2)
             : '  (no criteria defined)',
-        ].join('\n'),
-      )
+        ].join('\n');
+      })
       .join('\n\n');
 
     const systemPrompt = [
@@ -400,7 +435,9 @@ export class OpenFinanceService {
   }> {
     const stagesSection = stages
       .map((s) => {
-        const detail = s.description ?? JSON.stringify(s.criteria ?? {});
+        const detail =
+          s.description ??
+          JSON.stringify(OpenFinanceService.assembleCriteria(s));
         return `  Stage ${s.stepId} – ${s.title}: ${detail}`;
       })
       .join('\n');
@@ -422,6 +459,7 @@ export class OpenFinanceService {
                 [
                   `  - roadmap_goal_id: "${g.goalId}"`,
                   `    type: ${g.type}`,
+                  g.criteria ? `    criteria: "${g.criteria}"` : null,
                   `    title: "${g.title}"`,
                   `    description_template: "${g.descriptionTemplate}"`,
                   g.requiredContext
@@ -493,9 +531,10 @@ export class OpenFinanceService {
       'tasks and history, then return an ID-based reconciliation diff.',
       '',
       '## Reconciliation Rules',
-      '- FIRST set roadmap_state.current_step, then ONLY add goals whose step matches that current_step (the task bank below is grouped by step).',
+      '- FIRST set roadmap_state.current_step, then add goals from that step OR from criteria-tagged goals where the user has reached the required level in that specific criterion.',
+      '- Criteria-tagged goals (with a "criteria" field) become eligible independently of overall step: e.g. a "loans" goal at step 2 is eligible once the user\'s loans score >= 2, even if overall step is 1. The server re-validates eligibility, so you may propose them when relevant.',
       '- Reference existing tasks ONLY by their user_goal_id.',
-      "- Reference new tasks ONLY by a roadmap_goal_id taken from the determined step's Available Goal Templates.",
+      "- Reference new tasks ONLY by a roadmap_goal_id from the Available Goal Templates.",
       '- NEVER invent IDs. NEVER duplicate an existing task: if a relevant goal template',
       '  is already present among the existing tasks, KEEP or REPRIORITIZE it instead of adding it.',
       '- Put tasks that are no longer relevant (e.g. left over from a previous step) into "remove".',
@@ -643,9 +682,25 @@ export class OpenFinanceService {
     const { userId, currentStep, decision } = params;
     const p = params.userProfile;
     const templateMap = new Map(params.goalTemplates.map((g) => [g.goalId, g]));
+
+    // Build criteria scores from the freshly-determined profile for eligibility check.
+    const criteriaScores: CriteriaScores = {
+      cash_flow: p.cash_flow,
+      credit_consumption: p.credit_consumption,
+      loans: p.loans,
+      savings_investments: p.savings_investments,
+      pension_long_term: p.pension_long_term,
+      lifestyle_clubs: p.lifestyle_clubs,
+      mortgage: p.mortgage,
+      system_indicators: p.system_indicators,
+    };
+
+    // Filter eligible goals: general (step match) OR criteria (per-criterion >= stepId).
     const allowedAddIds = new Set(
       params.goalTemplates
-        .filter((g) => g.stepId === currentStep)
+        .filter((g) =>
+          isRoadmapGoalEligible(g, { currentStep, criteriaScores }),
+        )
         .map((g) => g.goalId),
     );
 

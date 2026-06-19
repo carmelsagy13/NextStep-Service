@@ -9,10 +9,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RoadmapGoal } from '../../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../../database/entities/user-profile.entity.js';
+import {
+  isRoadmapGoalEligible,
+  criteriaScoresFromProfile,
+} from '../../common/roadmap-goal-eligibility.js';
 
 /**
  * Enforces strict step isolation: a roadmap goal can only be assigned to a user
- * whose current_step matches the goal's step_id.
+ * if it's eligible based on their current step (for general goals) OR their
+ * per-criteria score (for criteria-tagged goals).
  *
  * Applied on routes that receive a `roadmapGoalId` in the request body.
  * Passes through silently when no `roadmapGoalId` is present (custom goals).
@@ -48,9 +53,20 @@ export class StepIsolationGuard implements CanActivate {
       throw new NotFoundException('User profile not found');
     }
 
-    if (roadmapGoal.stepId !== profile.currentStep) {
+    const currentStep = profile.currentStep;
+    if (currentStep === null || currentStep === undefined) {
+      throw new ForbiddenException('User has no current step assigned');
+    }
+
+    const criteriaScores = criteriaScoresFromProfile(profile);
+    if (
+      !isRoadmapGoalEligible(roadmapGoal, { currentStep, criteriaScores })
+    ) {
+      const reason = roadmapGoal.criteria
+        ? `Goal requires ${roadmapGoal.criteria} >= ${roadmapGoal.stepId} (user: ${criteriaScores[roadmapGoal.criteria] ?? 'null'})`
+        : `Goal requires step ${roadmapGoal.stepId} (user: ${currentStep})`;
       throw new ForbiddenException(
-        `Goal belongs to step ${roadmapGoal.stepId} but user is on step ${profile.currentStep}. Step isolation enforced.`,
+        `Goal is not eligible for this user. ${reason}`,
       );
     }
 

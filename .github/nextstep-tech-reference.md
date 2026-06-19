@@ -248,16 +248,30 @@ The system applies three behavioral economics concepts:
 |---|---|
 | step_id | INT PK |
 | title | VARCHAR(100) |
-| description | TEXT |
-| criteria | JSONB |
+| title_he | VARCHAR(100) nullable |
+| description | TEXT nullable |
+| loans | JSONB nullable |
+| mortgage | JSONB nullable |
+| cash_flow | JSONB nullable |
+| lifestyle_clubs | JSONB nullable |
+| pension_long_term | JSONB nullable |
+| system_indicators | JSONB nullable |
+| credit_consumption | JSONB nullable |
+| savings_investments | JSONB nullable |
+
+Each of the 8 criteria columns holds a `CriteriaDetail` object:
+```typescript
+{ description?: string, openFinanceParameters?: object, questionnaireParameters?: object }
+```
 
 ### RoadmapStates
 | Column | Type |
 |---|---|
 | state_id | UUID PK |
 | user_id | UUID FK → Users |
-| current_step_id | INT FK → RoadmapSteps |
 | progress_percent | INT |
+
+Note: `current_step_id` was removed. The user's current step is now stored in `UserProfiles.current_step`.
 
 ### LLMGuidanceLogs
 | Column | Type |

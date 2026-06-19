@@ -140,8 +140,8 @@ Event types: `salary_deposit`, `large_expense`, `goal_reached`, etc.
 
 | Method | Endpoint | Request Body | Response |
 |--------|----------|-------------|----------|
-| GET | `/roadmap` | — | `{ state: { stateId, userId, currentStepId, progressPercent }, steps: Array<{ stepId, title, description, criteria }> }` |
-| POST | `/roadmap` | `{ updates: object }` | `{ message: string }` |
+| GET | `/roadmap` | — | `{ state: { stateId, userId, currentStepId, progressPercent }, currentStepId, currentStep, steps: Array<RoadmapStep> }` |
+| POST | `/roadmap` | `{ currentStepId?: number, progressPercent?: number }` | `RoadmapState` |
 
 The 5 roadmap steps (static):
 | stepId | title |
@@ -256,11 +256,26 @@ export interface UserGoal {
 }
 
 // Roadmap
+export interface CriteriaDetail {
+  description?: string;
+  openFinanceParameters?: Record<string, unknown>;
+  questionnaireParameters?: Record<string, unknown>;
+}
+
 export interface RoadmapStep {
   stepId: number;
   title: string;
-  description: string;
-  criteria: Record<string, any>;
+  titleHe: string | null;
+  description: string | null;
+  // 8 granular criteria columns
+  loans: CriteriaDetail | null;
+  mortgage: CriteriaDetail | null;
+  cashFlow: CriteriaDetail | null;
+  lifestyleClubs: CriteriaDetail | null;
+  pensionLongTerm: CriteriaDetail | null;
+  systemIndicators: CriteriaDetail | null;
+  creditConsumption: CriteriaDetail | null;
+  savingsInvestments: CriteriaDetail | null;
 }
 
 export interface RoadmapState {

@@ -7,6 +7,25 @@ export enum RoadmapGoalType {
   BONUS = 'bonus',
 }
 
+/**
+ * The 8 granular financial criteria a goal can be scoped to. A goal tagged with
+ * one of these is a "criteria goal": it becomes eligible based on the user's
+ * per-criteria step (e.g. their `loans` score) rather than their overall step.
+ * A NULL `criteria` marks a general goal, matched by the overall current step.
+ */
+export const ROADMAP_GOAL_CRITERIA = [
+  'cash_flow',
+  'credit_consumption',
+  'loans',
+  'savings_investments',
+  'pension_long_term',
+  'lifestyle_clubs',
+  'mortgage',
+  'system_indicators',
+] as const;
+
+export type RoadmapGoalCriteria = (typeof ROADMAP_GOAL_CRITERIA)[number];
+
 @Entity('roadmap_goals')
 export class RoadmapGoal {
   @PrimaryGeneratedColumn('uuid', { name: 'goal_id' })
@@ -14,6 +33,14 @@ export class RoadmapGoal {
 
   @Column({ type: 'int', name: 'step_id' })
   stepId: number;
+
+  /**
+   * Optional criteria this goal is scoped to. When set, the goal is eligible
+   * once the user reaches `step_id` in that criteria (profile[criteria] >=
+   * step_id), independently of their overall current step. NULL = general goal.
+   */
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  criteria: RoadmapGoalCriteria | null;
 
   @Column({ type: 'enum', enum: RoadmapGoalType })
   type: RoadmapGoalType;
