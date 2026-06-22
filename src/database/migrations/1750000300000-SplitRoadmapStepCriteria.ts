@@ -5,7 +5,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * JSONB columns — one for each granular financial dimension.
  *
  * Each new column holds a self-contained definition for that criteria at the
- * given step: `{ description, openFinanceParameters, questionnaireParameters }`.
+ * given step: `{ description, openFinanceData, questionnaireParameters }`.
+ * - openFinanceData: free-text string with criteria definitions (formulas/thresholds).
+ * - questionnaireParameters: structured key-value object for questionnaire mappings.
  * This gives the LLM explicit, criteria-scoped context so it can pinpoint the
  * user's current step per dimension and assign relevant goals.
  *

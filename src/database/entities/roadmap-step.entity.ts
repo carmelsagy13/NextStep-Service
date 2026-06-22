@@ -7,12 +7,13 @@ import { Entity, PrimaryColumn, Column } from 'typeorm';
  * so the LLM has explicit, criteria-scoped context when determining the user's
  * current step per dimension and assigning relevant goals:
  *  - description: short human-readable definition of this criteria at this step.
- *  - openFinanceParameters: bank/Open-Finance derived parameters (name → value).
+ *  - openFinanceData: free-text field containing Open Finance criteria definitions
+ *    (e.g., bullet points with formulas and thresholds like "discretionarySurplus < 0").
  *  - questionnaireParameters: questionnaire-derived parameters (name → value).
  */
 export interface CriteriaDetail {
   description?: string;
-  openFinanceParameters?: Record<string, unknown>;
+  openFinanceData?: string;
   questionnaireParameters?: Record<string, unknown>;
 }
 
