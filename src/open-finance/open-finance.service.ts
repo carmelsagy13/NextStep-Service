@@ -69,6 +69,10 @@ export interface GeminiAnalysisResult {
 export interface PersistAnalysisResult {
   roadmap_state: RoadmapState;
   user_goals: UserGoal[];
+  task_selection_reasoning: {
+    why_not_added: string;
+    relevant_but_premature: string[];
+  };
 }
 
 /**
@@ -107,6 +111,10 @@ export interface ReconciliationDecision {
   progress_assessment: {
     meaningful_progress: boolean;
     summary: string;
+  };
+  task_selection_reasoning: {
+    why_not_added: string;
+    relevant_but_premature: string[];
   };
 }
 
@@ -246,6 +254,13 @@ export class OpenFinanceService {
     const currentStep = roadmapState.current_step;
     const context = await contextPromise;
 
+    // Log the LLM's task selection reasoning for transparency and debugging
+    this.logger.log(
+      `[AI] Task selection reasoning (userId=${userId}):\n` +
+        `  Why not added: ${decision.task_selection_reasoning.why_not_added}\n` +
+        `  Relevant but premature: ${decision.task_selection_reasoning.relevant_but_premature.join(', ') || 'none'}`,
+    );
+
     // 4. Persist the reconciliation result (non-destructive) within a transaction.
     const clientResponse = await this.applyReconciliation({
       userId,
@@ -256,6 +271,9 @@ export class OpenFinanceService {
       goalTemplates,
       context,
     });
+
+    // Attach the task selection reasoning to the response
+    clientResponse.task_selection_reasoning = decision.task_selection_reasoning;
 
     this.logger.debug(
       `[AI] Final response sent to client (userId=${userId}):\n` +
@@ -590,7 +608,23 @@ export class OpenFinanceService {
             '<boolean — has the user meaningfully progressed toward the next level>',
           summary: '<Hebrew summary of the change since the last assessment>',
         },
+        task_selection_reasoning: {
+          why_not_added:
+            '<Hebrew explanation: why were other available tasks from the task bank NOT added? Which goals were considered but rejected, and why?>',
+          relevant_but_premature:
+            '<array of roadmap_goal_id strings: goals that ARE relevant but the user is not ready for them yet>',
+        },
       }),
+      '',
+      '## Task Selection Transparency',
+      'IMPORTANT: In task_selection_reasoning.why_not_added, explain your decision-making:',
+      '- Which goals from the Available Goal Templates were considered but NOT added, and why?',
+      '- Are they irrelevant to this user\'s situation?',
+      '- Does the user lack the financial prerequisites?',
+      '- Are they redundant with existing tasks?',
+      'In relevant_but_premature, list goal IDs that would be valuable but require',
+      'the user to progress further (e.g., investment goals for someone still building',
+      'an emergency fund). This helps track the user\'s journey.',
       '',
       'When the questionnaire block below is present, let the user\'s SELF-DECLARED',
       'goals (e.g. buying a car, wedding, home equity, safety net, early retirement)',
@@ -622,6 +656,7 @@ export class OpenFinanceService {
   private normalizeReconciliationDecision(raw: any): ReconciliationDecision {
     const tr = raw?.task_reconciliation ?? {};
     const arr = (v: any) => (Array.isArray(v) ? v : []);
+    const tsr = raw?.task_selection_reasoning ?? {};
     return {
       task_reconciliation: {
         keep: arr(tr.keep),
@@ -635,6 +670,10 @@ export class OpenFinanceService {
           raw?.progress_assessment?.meaningful_progress,
         ),
         summary: raw?.progress_assessment?.summary ?? '',
+      },
+      task_selection_reasoning: {
+        why_not_added: tsr.why_not_added ?? '',
+        relevant_but_premature: arr(tsr.relevant_but_premature),
       },
     };
   }
@@ -855,7 +894,11 @@ export class OpenFinanceService {
         order: { priority: 'ASC' },
       });
 
-      return { roadmap_state: savedState, user_goals: activeGoals };
+      return {
+        roadmap_state: savedState,
+        user_goals: activeGoals,
+        task_selection_reasoning: { why_not_added: '', relevant_but_premature: [] },
+      };
     });
   }
 
