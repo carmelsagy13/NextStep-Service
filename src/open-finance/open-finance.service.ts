@@ -332,8 +332,9 @@ export class OpenFinanceService {
     const criteriaByStageSection = stages
       .map((s) => {
         const criteria = OpenFinanceService.assembleCriteria(s);
+        const name = s.titleHe ? `${s.title} / ${s.titleHe}` : s.title;
         return [
-          `### Stage ${s.stepId} – ${s.title}`,
+          `### Stage ${s.stepId} – ${name}`,
           Object.keys(criteria).length
             ? JSON.stringify(criteria, null, 2)
             : '  (no criteria defined)',
@@ -357,6 +358,32 @@ export class OpenFinanceService {
       '- activeCreditCardsCount / avgMonthlyCreditCardSpend / creditCardFeesTotal: credit-card usage.',
       '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount, akamCount, cancelledCount): BDI distress counters. Any non-zero value signals instability — score system_indicators lower.',
       'Judge cash_flow on discretionarySurplus and the deficitMonthsCount trend. Reward high totalInvestments / savingsRate when scoring savings_investments and pension_long_term. Score loans/mortgage from totalDebt, and system_indicators worse when systemFlags are non-zero.',
+      '',
+      '## Derived cash-flow metrics (compute BEFORE evaluating the cash-flow stage)',
+      'Before evaluating the user’s financial stage, calculate the following derived metrics based on the raw Open Finance fields.',
+      '',
+      '1. Calculate weightedReturnedPaymentsScoreLast3Months:',
+      'weightedReturnedPaymentsScoreLast3Months =',
+      '  (countForAkamHokLast3Month * 1) +',
+      '  (countForAkamChqLast3Month * 3) +',
+      '  (countCancelledHokLast3Month * 2) +',
+      '  (countForCancellChqLast3Month * 3)',
+      'This score represents returned or cancelled payment behavior over the last 3 months, including returned direct debits, returned checks, cancelled direct debits, and checks marked for cancellation.',
+      '',
+      '2. Calculate weightedAccountDistressScoreLast3Months:',
+      'weightedAccountDistressScoreLast3Months =',
+      '  (countForPigurLast3Month * 4) +',
+      '  (countExceededAlertLast3Month * 2) +',
+      '  (countForLimitLast3Month * 1) +',
+      '  (countForSilukPigurLast3Month * 3)',
+      'This score represents account distress signals over the last 3 months, including arrears, exceeded limit alerts, limit-related warnings, and arrears settlement events.',
+      '',
+      'After calculating these derived metrics, evaluate the user’s cash-flow stage using the conditions stored in the database.',
+      'For the cash-flow criterion, read the cash_flow JSONB field from the roadmap_steps table for each step. Use the database records as the source of truth for the stage definitions, descriptions, and conditions.',
+      'Evaluate the user’s Open Finance data and the calculated derived metrics against the cash_flow conditions defined for each step.',
+      '- If the user matches multiple stages, assign the lowest matching stage, because risk signals should override stronger indicators.',
+      '- If the user does not exactly match any stage, choose the closest stage based on the overall cash-flow picture described in the DB.',
+      'Do not hardcode the cash-flow stage conditions inside the prompt. Always use the current conditions stored in the roadmap_steps.cash_flow JSONB field.',
       '',
       '## 8 Granular Financial Criteria — Stage Definitions',
       criteriaByStageSection,
@@ -456,7 +483,8 @@ export class OpenFinanceService {
         const detail =
           s.description ??
           JSON.stringify(OpenFinanceService.assembleCriteria(s));
-        return `  Stage ${s.stepId} – ${s.title}: ${detail}`;
+        const name = s.titleHe ? `${s.title} / ${s.titleHe}` : s.title;
+        return `  Stage ${s.stepId} – ${name}: ${detail}`;
       })
       .join('\n');
 
@@ -483,6 +511,12 @@ export class OpenFinanceService {
                   g.requiredContext
                     ? `    required_context: "${g.requiredContext}"`
                     : null,
+                  g.requiredContextText
+                    ? `    required_context_text: "${g.requiredContextText}"`
+                    : null,
+                  g.dynamicParams
+                    ? `    dynamic_params_schema: ${JSON.stringify(g.dynamicParams)}`
+                    : null,
                   `    priority: ${g.priority}`,
                 ]
                   .filter(Boolean)
@@ -503,6 +537,13 @@ export class OpenFinanceService {
               `    status: ${t.status}`,
               `    priority: ${t.priority}`,
               `    progress: ${t.currentAmount ?? 0}/${t.targetAmount ?? 'n/a'}`,
+              t.targetDate
+                ? `    target_date: ${t.targetDate instanceof Date ? t.targetDate.toISOString().slice(0, 10) : t.targetDate}`
+                : null,
+              t.dynamicParams
+                ? `    dynamic_params: ${JSON.stringify(t.dynamicParams)}`
+                : null,
+              t.aiInsight ? `    ai_insight: "${t.aiInsight}"` : null,
               t.roadmapGoalId
                 ? `    roadmap_goal_id: "${t.roadmapGoalId}"`
                 : null,

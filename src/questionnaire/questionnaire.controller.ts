@@ -22,6 +22,18 @@ export class QuestionnaireController {
     return this.questionnaireService.getStructure();
   }
 
+  @Get('responses')
+  @ApiOperation({
+    summary:
+      "Return the current user's saved answers (from their latest submission) " +
+      'as a flat { questionKey, value } list (value shape matches the question ' +
+      'type: string / number / string[]). Clients filter for the keys they need ' +
+      '(e.g. the q_goal_* fields).',
+  })
+  getResponses(@CurrentUser() user: { userId: string }) {
+    return this.questionnaireService.getResponses(user.userId);
+  }
+
   @Post('respond')
   @ApiOperation({
     summary:

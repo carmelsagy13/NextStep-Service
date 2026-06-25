@@ -111,7 +111,11 @@ export class GoalsService {
 
   async getGoals(userId: string, status?: UserGoalStatus) {
     const where = status ? { userId, status } : { userId };
-    return this.goalRepo.find({ where, order: { priority: 'ASC' } });
+    return this.goalRepo.find({
+      where,
+      relations: ['roadmapGoal'],
+      order: { priority: 'ASC' },
+    });
   }
 
   async createGoal(userId: string, body: any) {

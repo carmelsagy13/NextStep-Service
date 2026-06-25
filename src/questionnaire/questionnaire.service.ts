@@ -47,8 +47,7 @@ export interface SerializedScreen {
 }
 
 /** A single answer projected for LLM/analytics consumption. */
-export interface QuestionnaireAnswerView {
-  questionKey: string;
+export interface QuestionnaireAnswerView {  questionKey: string;
   /** Hebrew question text. */
   question: string;
   /**
@@ -69,6 +68,13 @@ export interface QuestionnaireSummary {
 interface ResponseError {
   questionKey: string;
   message: string;
+}
+
+/** A persisted answer projected for the client, keyed by stable question key. */
+export interface SavedAnswer {
+  questionKey: string;
+  /** Raw stored value: string for SINGLE_CHOICE/TEXT, number for NUMBER, string[] for MULTIPLE_CHOICE. */
+  value: AnswerValue;
 }
 
 /**
@@ -196,8 +202,19 @@ export class QuestionnaireService {
       questions.map((q) => [q.questionId, q]),
     );
 
-    // Normalize incoming answers into a key→value map.
+    // Load the user's previously-saved answers so a PARTIAL payload (e.g. only
+    // the goal answers being edited) is validated against the user's FULL answer
+    // set — visibility/required-ness still resolve correctly — and is upserted in
+    // place without wiping the answers the client did not resend.
+    const existing = await this.responseRepo.find({
+      where: { userId },
+      relations: { question: true },
+    });
     const answers = new Map<string, AnswerValue>();
+    for (const row of existing) {
+      if (row.question) answers.set(row.question.questionKey, row.answerValue);
+    }
+    // Overlay the incoming answers on top of the saved ones.
     for (const item of dto.answers) {
       answers.set(item.questionKey, item.value);
     }
@@ -222,7 +239,8 @@ export class QuestionnaireService {
       if (typeError) errors.push({ questionKey: item.questionKey, message: typeError });
     }
 
-    // 2) Enforce required-ness for every currently-visible question.
+    // 2) Enforce required-ness for every currently-visible question, evaluated
+    //    against the merged answer set (saved + incoming).
     for (const question of questions) {
       if (!question.isRequired) continue;
       if (!this.isVisible(question, byId, byKey, answers)) continue;
@@ -235,22 +253,29 @@ export class QuestionnaireService {
       throw new BadRequestException({ message: 'Questionnaire validation failed', errors });
     }
 
-    // 3) Persist: one submission header + per-answer upsert (visible answers only).
-    const lastVersion = await this.submissionRepo
-      .createQueryBuilder('s')
-      .select('MAX(s.version)', 'max')
-      .where('s.user_id = :userId', { userId })
-      .getRawOne<{ max: number | null }>();
+    // 3) Persist: reuse the user's latest submission so it always reflects the
+    //    COMPLETE current answer set; only the first submission creates a header.
+    let submission = await this.submissionRepo.findOne({
+      where: { userId, status: SubmissionStatus.SUBMITTED },
+      order: { version: 'DESC' },
+    });
+    if (!submission) {
+      submission = await this.submissionRepo.save(
+        this.submissionRepo.create({
+          userId,
+          version: 1,
+          status: SubmissionStatus.SUBMITTED,
+          submittedAt: new Date(),
+        }),
+      );
+    } else {
+      submission.submittedAt = new Date();
+      await this.submissionRepo.save(submission);
+    }
 
-    const submission = await this.submissionRepo.save(
-      this.submissionRepo.create({
-        userId,
-        version: (lastVersion?.max ?? 0) + 1,
-        status: SubmissionStatus.SUBMITTED,
-        submittedAt: new Date(),
-      }),
-    );
-
+    // Upsert by (user_id, question_id) — i.e. by question key — bumping
+    // updated_at on each affected row (raw upsert does not auto-touch it).
+    const now = new Date();
     let persisted = 0;
     for (const item of dto.answers) {
       const question = byKey.get(item.questionKey)!;
@@ -263,6 +288,7 @@ export class QuestionnaireService {
           questionId: question.questionId,
           submissionId: submission.submissionId,
           answerValue: this.normalizeAnswer(question, item.value),
+          updatedAt: now,
         },
         { conflictPaths: ['userId', 'questionId'] },
       );
@@ -275,6 +301,37 @@ export class QuestionnaireService {
       version: submission.version,
       persistedAnswers: persisted,
     };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // GET /questionnaire/responses — the user's saved answers, keyed by question
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the current user's saved answers as a flat { questionKey, value }
+   * list, scoped to the user's most recent SUBMITTED submission so only the
+   * latest pass is returned (never stale answers from older submissions).
+   * Values are the raw stored shapes (string / number / string[]); the client
+   * filters for the keys it cares about (e.g. the q_goal_* fields).
+   */
+  async getResponses(userId: string): Promise<{ responses: SavedAnswer[] }> {
+    const submission = await this.submissionRepo.findOne({
+      where: { userId, status: SubmissionStatus.SUBMITTED },
+      order: { version: 'DESC' },
+    });
+    if (!submission) return { responses: [] };
+
+    const rows = await this.responseRepo.find({
+      where: { submissionId: submission.submissionId },
+      relations: { question: true },
+    });
+
+    const responses = rows
+      .filter((r) => r.question)
+      .sort((a, b) => a.question.orderIndex - b.question.orderIndex)
+      .map((r) => ({ questionKey: r.question.questionKey, value: r.answerValue }));
+
+    return { responses };
   }
 
   // ──────────────────────────────────────────────────────────────────────
