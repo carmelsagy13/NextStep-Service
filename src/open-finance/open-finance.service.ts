@@ -108,6 +108,7 @@ export interface ReconciliationDecision {
     update: Array<{
       user_goal_id: string;
       target_amount?: number | null;
+      current_amount?: number | null;
       target_date?: string | null;
       dynamic_params?: Record<string, unknown> | null;
       ai_insight?: string | null;
@@ -666,6 +667,22 @@ export class OpenFinanceService {
       'serves (a generic saving template with a {{goal}} placeholder is acceptable),',
       'so the new task is linked to the goal it advances.',
       '',
+      '## Partial Progress Tracking — IMPORTANT',
+      'For every ACTIVE task that has a target_amount, ESTIMATE the user\'s actual',
+      'accumulated progress toward it from the new financial features (e.g.',
+      'currentBalance, totalInvestments, totalSecuritiesValue, accumulated surplus,',
+      'or a dedicated savings balance) — choose the figure that best reflects money',
+      'already set aside for that specific goal. If that estimate MEANINGFULLY differs',
+      'from the task\'s current `progress` value shown in Existing Tasks, return an',
+      '"update" action for that user_goal_id carrying the recalculated `current_amount`:',
+      '- current_amount is in ILS, must be >= 0 and SHOULD NOT exceed target_amount;',
+      '- use REAL numbers derived from the features block — never invent figures; if no',
+      '  meaningful progress is derivable, OMIT current_amount (do not send 0 to wipe it);',
+      '- partial progress is an UPDATE only. Do NOT put a task in "complete" unless it is',
+      '  fully achieved (current_amount has reached target_amount or the goal is clearly met).',
+      'An "update" may carry current_amount alone, or together with the aspiration-driven',
+      'target_amount/target_date/dynamic_params adjustments described above.',
+      '',
       `## User's Current Pyramid Level: ${priorStep ?? 'unknown'} (progress ${priorProgress ?? 0}%)`,
       '',
       '## Previous Assessments (abstracted — no raw financial data)',
@@ -703,8 +720,11 @@ export class OpenFinanceService {
           complete: [{ user_goal_id: '<existing UUID>' }],
           update: [
             {
-              user_goal_id: '<existing UUID whose linked aspiration changed>',
+              user_goal_id:
+                '<existing UUID whose progress and/or linked aspiration changed>',
               target_amount: '<number or null>',
+              current_amount:
+                '<number — recalculated accumulated progress in ILS, or omit if none>',
               target_date: '<ISO-8601 string or null>',
               dynamic_params: { key: 'value' },
               ai_insight: '<Hebrew justification of the adjustment>',
@@ -982,6 +1002,17 @@ export class OpenFinanceService {
         if (!t || t.status === UserGoalStatus.COMPLETED) continue;
         if (u.target_amount !== undefined && u.target_amount !== null) {
           t.targetAmount = u.target_amount;
+        }
+        // Automated partial-progress: map the LLM's recalculated accumulated
+        // progress onto the task. Only ACTIVE tasks reach here (COMPLETED ones
+        // were skipped above), so this never reverts a finished task. Clamp to
+        // >= 0 and never overshoot a known target_amount.
+        if (u.current_amount != null && Number.isFinite(Number(u.current_amount))) {
+          let next = Math.max(0, Number(u.current_amount));
+          if (t.targetAmount != null && Number(t.targetAmount) > 0) {
+            next = Math.min(next, Number(t.targetAmount));
+          }
+          t.currentAmount = next;
         }
         if (u.target_date) t.targetDate = new Date(u.target_date);
         if (u.dynamic_params != null) {
