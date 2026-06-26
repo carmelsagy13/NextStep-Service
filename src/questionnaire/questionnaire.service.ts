@@ -15,6 +15,40 @@ import {
   SubmissionStatus,
 } from '../database/entities/questionnaire.types.js';
 import { RespondQuestionnaireDto } from './dto/respond-questionnaire.dto.js';
+import {
+  AspirationsService,
+  OnboardingGoalInput,
+} from '../aspirations/aspirations.service.js';
+import { UserAspirationStatus } from '../database/entities/user-aspiration.entity.js';
+
+/**
+ * The overarching goals captured by the onboarding questionnaire are NO LONGER
+ * persisted as questionnaire_responses — they are routed into the dedicated
+ * aspiration store. These constants map the questionnaire's goal keys to the
+ * goal_type_catalog codes.
+ *
+ * The parent MULTIPLE_CHOICE option values (car_purchase, wedding_event, …) are
+ * already identical to the catalog codes, so only the per-goal amount/timeframe
+ * sub-field prefixes need a mapping.
+ */
+const GOAL_PARENT_KEY = 'q_financial_goals';
+const GOAL_SUBFIELD_PREFIX_TO_TYPE: Record<string, string> = {
+  q_goal_car: 'car_purchase',
+  q_goal_wedding: 'wedding_event',
+  q_goal_home: 'home_equity',
+  q_goal_trip: 'big_trip_sabbatical',
+};
+const GOAL_TYPE_TO_SUBFIELD_PREFIX: Record<string, string> = Object.fromEntries(
+  Object.entries(GOAL_SUBFIELD_PREFIX_TO_TYPE).map(([prefix, code]) => [
+    code,
+    prefix,
+  ]),
+);
+
+/** True for any questionnaire key that now lives in the aspiration store. */
+function isGoalKey(key: string): boolean {
+  return key === GOAL_PARENT_KEY || key.startsWith('q_goal_');
+}
 
 /** A dependency rule projected with the trigger's stable key for the client. */
 export interface SerializedDependency {
@@ -115,6 +149,7 @@ export class QuestionnaireService {
     private readonly submissionRepo: Repository<QuestionnaireSubmission>,
     @InjectRepository(QuestionnaireResponse)
     private readonly responseRepo: Repository<QuestionnaireResponse>,
+    private readonly aspirations: AspirationsService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────
@@ -214,6 +249,11 @@ export class QuestionnaireService {
     for (const row of existing) {
       if (row.question) answers.set(row.question.questionKey, row.answerValue);
     }
+    // Overarching goals live in the aspiration store, not questionnaire_responses.
+    // Hydrate the goal-related keys from the user's current aspirations so a
+    // partial edit of OTHER fields still validates (visibility/required-ness of
+    // the goal questions resolves against the user's real, current goals).
+    await this.hydrateGoalAnswers(userId, answers);
     // Overlay the incoming answers on top of the saved ones.
     for (const item of dto.answers) {
       answers.set(item.questionKey, item.value);
@@ -281,6 +321,9 @@ export class QuestionnaireService {
       const question = byKey.get(item.questionKey)!;
       if (!this.isVisible(question, byId, byKey, answers)) continue;
       if (this.isEmpty(item.value)) continue;
+      // Goal answers are routed to the aspiration store below — never persisted
+      // as questionnaire_responses (single source of truth = aspiration store).
+      if (isGoalKey(item.questionKey)) continue;
 
       await this.responseRepo.upsert(
         {
@@ -295,6 +338,16 @@ export class QuestionnaireService {
       persisted += 1;
     }
 
+    // Route the (merged) overarching goal answers into the aspiration store when
+    // the payload touched any goal field. Idempotent: unchanged goals bump no
+    // revision and trigger no task re-sync.
+    if (dto.answers.some((a) => isGoalKey(a.questionKey))) {
+      await this.aspirations.upsertFromOnboarding(
+        userId,
+        this.extractGoalSelections(answers),
+      );
+    }
+
     return {
       message: 'Questionnaire submitted',
       submissionId: submission.submissionId,
@@ -302,6 +355,67 @@ export class QuestionnaireService {
       persistedAnswers: persisted,
     };
   }
+
+  /**
+   * Reconstruct the questionnaire's goal answers (parent selection + per-goal
+   * amount/timeframe) from the user's ACTIVE aspirations and seed them into the
+   * merged answer map. Only fills keys the questionnaire defines; never
+   * overwrites an answer already present.
+   */
+  private async hydrateGoalAnswers(
+    userId: string,
+    answers: Map<string, AnswerValue>,
+  ): Promise<void> {
+    const aspirations = await this.aspirations.getAspirations(userId);
+    const active = aspirations.filter(
+      (a) => a.status === UserAspirationStatus.ACTIVE,
+    );
+    if (!active.length) return;
+
+    if (!answers.has(GOAL_PARENT_KEY)) {
+      answers.set(
+        GOAL_PARENT_KEY,
+        active.map((a) => a.goalTypeCode),
+      );
+    }
+    for (const a of active) {
+      const prefix = GOAL_TYPE_TO_SUBFIELD_PREFIX[a.goalTypeCode];
+      if (!prefix) continue;
+      const amountKey = `${prefix}_amount`;
+      const timeframeKey = `${prefix}_timeframe`;
+      if (!answers.has(amountKey) && a.targetAmount != null) {
+        answers.set(amountKey, Number(a.targetAmount));
+      }
+      const months = (a.attributes as { timeframeMonths?: number } | null)
+        ?.timeframeMonths;
+      if (!answers.has(timeframeKey) && months != null) {
+        answers.set(timeframeKey, Number(months));
+      }
+    }
+  }
+
+  /**
+   * Translate the merged goal answers into the aspiration upsert payload: each
+   * selected option becomes a goal, carrying its amount/timeframe sub-fields
+   * where present.
+   */
+  private extractGoalSelections(
+    answers: Map<string, AnswerValue>,
+  ): OnboardingGoalInput[] {
+    const selected = answers.get(GOAL_PARENT_KEY);
+    const codes = Array.isArray(selected) ? (selected as string[]) : [];
+    return codes.map((code) => {
+      const prefix = GOAL_TYPE_TO_SUBFIELD_PREFIX[code];
+      const amount = prefix ? answers.get(`${prefix}_amount`) : undefined;
+      const timeframe = prefix ? answers.get(`${prefix}_timeframe`) : undefined;
+      return {
+        goalTypeCode: code,
+        targetAmount: amount != null ? Number(amount) : null,
+        timeframeMonths: timeframe != null ? Number(timeframe) : null,
+      };
+    });
+  }
+
 
   // ──────────────────────────────────────────────────────────────────────
   // GET /questionnaire/responses — the user's saved answers, keyed by question

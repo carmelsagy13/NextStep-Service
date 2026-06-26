@@ -8,6 +8,7 @@ import { QuestionnaireOption } from '../database/entities/questionnaire-option.e
 import { QuestionnaireDependency } from '../database/entities/questionnaire-dependency.entity.js';
 import { QuestionnaireSubmission } from '../database/entities/questionnaire-submission.entity.js';
 import { QuestionnaireResponse } from '../database/entities/questionnaire-response.entity.js';
+import { AspirationsModule } from '../aspirations/aspirations.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { QuestionnaireResponse } from '../database/entities/questionnaire-respon
       QuestionnaireSubmission,
       QuestionnaireResponse,
     ]),
+    AspirationsModule,
   ],
   controllers: [QuestionnaireController],
   providers: [QuestionnaireService],

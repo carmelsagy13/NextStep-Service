@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { User } from './user.entity.js';
 import { RoadmapGoal } from './roadmap-goal.entity.js';
+import { UserAspiration } from './user-aspiration.entity.js';
 
 /**
  * Lifecycle status of a user task. Replaces the previous boolean `isCompleted`
@@ -39,6 +40,23 @@ export class UserGoal {
 
   @Column({ type: 'uuid', name: 'roadmap_goal_id', nullable: true })
   roadmapGoalId: string;
+
+  /**
+   * The overarching {@link UserAspiration} this task serves (e.g. the wedding
+   * goal a monthly-saving task contributes to). NULL for tasks not tied to a
+   * user-declared aspiration. Lets reconciliation re-tune this task when the
+   * aspiration's target amount/date changes.
+   */
+  @Column({ type: 'uuid', name: 'aspiration_id', nullable: true })
+  aspirationId: string | null;
+
+  /**
+   * The aspiration `revision` this task was last reconciled against. When it
+   * trails the aspiration's current revision the task is stale and the LLM
+   * should update its parameters.
+   */
+  @Column({ type: 'int', name: 'synced_aspiration_revision', nullable: true })
+  syncedAspirationRevision: number | null;
 
   @Column({ type: 'varchar', length: 100, name: 'goal_name' })
   goalName: string;
@@ -98,4 +116,8 @@ export class UserGoal {
   @ManyToOne(() => RoadmapGoal, (roadmapGoal) => roadmapGoal.userGoals, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'roadmap_goal_id' })
   roadmapGoal: RoadmapGoal;
+
+  @ManyToOne(() => UserAspiration, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'aspiration_id' })
+  aspiration: UserAspiration | null;
 }

@@ -20,6 +20,10 @@ import {
 } from '../database/entities/user-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
+import {
+  UserAspiration,
+  UserAspirationStatus,
+} from '../database/entities/user-aspiration.entity.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import { extractFeatures } from './financial-report.extractor.js';
 import { FinancialFeatures } from './financial-features.model.js';
@@ -85,6 +89,8 @@ export interface UserReconciliationContext {
   currentState: RoadmapState | null;
   existingTasks: UserGoal[];
   history: UserProfileHistory[];
+  /** The user's active overarching goals, used to detect changed targets. */
+  aspirations: UserAspiration[];
 }
 
 /**
@@ -99,8 +105,18 @@ export interface ReconciliationDecision {
     remove: Array<{ user_goal_id: string; reason: string }>;
     reprioritize: Array<{ user_goal_id: string; new_priority: number }>;
     complete: Array<{ user_goal_id: string }>;
+    update: Array<{
+      user_goal_id: string;
+      target_amount?: number | null;
+      target_date?: string | null;
+      dynamic_params?: Record<string, unknown> | null;
+      ai_insight?: string | null;
+      new_priority?: number | null;
+      reason?: string;
+    }>;
     add: Array<{
       roadmap_goal_id: string;
+      aspiration_id?: string | null;
       target_amount: number | null;
       target_date: string | null;
       dynamic_params: Record<string, unknown>;
@@ -133,6 +149,8 @@ export class OpenFinanceService {
     private readonly roadmapGoalRepo: Repository<RoadmapGoal>,
     @InjectRepository(UserProfileHistory)
     private readonly historyRepo: Repository<UserProfileHistory>,
+    @InjectRepository(UserAspiration)
+    private readonly aspirationRepo: Repository<UserAspiration>,
     private readonly dataSource: DataSource,
     private readonly llm: LlmClientService,
     private readonly financialAnalysis: FinancialAnalysisService,
@@ -434,7 +452,7 @@ export class OpenFinanceService {
   private async loadUserContext(
     userId: string,
   ): Promise<UserReconciliationContext> {
-    const [currentProfile, currentState, existingTasks, history] =
+    const [currentProfile, currentState, existingTasks, history, aspirations] =
       await Promise.all([
         this.dataSource
           .getRepository(UserProfile)
@@ -451,9 +469,12 @@ export class OpenFinanceService {
           order: { createdAt: 'DESC' },
           take: 5,
         }),
+        this.aspirationRepo.find({
+          where: { userId, status: UserAspirationStatus.ACTIVE },
+        }),
       ]);
 
-    return { currentProfile, currentState, existingTasks, history };
+    return { currentProfile, currentState, existingTasks, history, aspirations };
   }
 
   /**
@@ -547,12 +568,41 @@ export class OpenFinanceService {
               t.roadmapGoalId
                 ? `    roadmap_goal_id: "${t.roadmapGoalId}"`
                 : null,
+              t.aspirationId
+                ? `    aspiration_id: "${t.aspirationId}"`
+                : null,
             ]
               .filter(Boolean)
               .join('\n'),
           )
           .join('\n\n')
       : '  (user has no existing tasks — this is a first assessment)';
+
+    // The user's overarching goals. A "changed" flag marks aspirations whose
+    // target was edited since the linked tasks were last reconciled — the LLM
+    // should UPDATE those tasks' parameters rather than leave them stale.
+    const aspirationsSection = context.aspirations.length
+      ? context.aspirations
+          .map((a) => {
+            const changed =
+              a.lastSyncedRevision == null ||
+              a.revision > a.lastSyncedRevision;
+            return [
+              `  - aspiration_id: "${a.aspirationId}"`,
+              `    goal_type: ${a.goalTypeCode}`,
+              `    title: "${a.title}"`,
+              `    target_amount: ${a.targetAmount ?? 'null'}`,
+              `    target_date: ${a.targetDate ? (a.targetDate instanceof Date ? a.targetDate.toISOString().slice(0, 10) : a.targetDate) : 'null'}`,
+              a.attributes
+                ? `    attributes: ${JSON.stringify(a.attributes)}`
+                : null,
+              `    changed_since_last_sync: ${changed}`,
+            ]
+              .filter(Boolean)
+              .join('\n');
+          })
+          .join('\n\n')
+      : '  (user has not declared any overarching goals)';
 
     const priorStep = context.currentProfile?.currentStep ?? null;
     const priorProgress = context.currentState?.progressPercent ?? null;
@@ -601,6 +651,21 @@ export class OpenFinanceService {
       '- Only "add" templates that are genuinely relevant and not already assigned.',
       '- When adding a goal, fill dynamic_params with REAL numbers taken from the financial features block (e.g. surplus, currentBalance, activeCreditCardsCount, totalInvestments). NEVER invent figures; if a value is not derivable from the features, use null.',
       '',
+      '## Overarching Goal (Aspiration) Sync — IMPORTANT',
+      "The user declares OVERARCHING goals (\"aspirations\") separately — e.g. a wedding",
+      'budget or a car target. An existing task may be LINKED to one via aspiration_id.',
+      'When an aspiration is marked `changed_since_last_sync: true`, the linked task\'s',
+      'parameters are STALE. Put such tasks into "update" (NOT remove+add) and recompute:',
+      '- target_amount / target_date from the aspiration\'s new values;',
+      '- dynamic_params that depend on the target (e.g. a monthly saving figure =',
+      '  remaining amount / months until target_date). Use REAL numbers or null.',
+      'Only "update" tasks that reference an aspiration_id present below and a',
+      'user_goal_id present in Existing Tasks. Do NOT change a task\'s identity.',
+      'If an aspiration has NO linked task yet and a suitable template exists in the',
+      'task bank, ADD that template and set its `aspiration_id` to the aspiration it',
+      'serves (a generic saving template with a {{goal}} placeholder is acceptable),',
+      'so the new task is linked to the goal it advances.',
+      '',
       `## User's Current Pyramid Level: ${priorStep ?? 'unknown'} (progress ${priorProgress ?? 0}%)`,
       '',
       '## Previous Assessments (abstracted — no raw financial data)',
@@ -608,6 +673,9 @@ export class OpenFinanceService {
       '',
       '## Existing Tasks',
       existingTasksSection,
+      '',
+      "## User's Overarching Goals (Aspirations)",
+      aspirationsSection,
       '',
       '## Available Goal Templates (task bank, grouped by step)',
       taskBankSection,
@@ -633,9 +701,22 @@ export class OpenFinanceService {
             { user_goal_id: '<existing UUID>', new_priority: '<integer>' },
           ],
           complete: [{ user_goal_id: '<existing UUID>' }],
+          update: [
+            {
+              user_goal_id: '<existing UUID whose linked aspiration changed>',
+              target_amount: '<number or null>',
+              target_date: '<ISO-8601 string or null>',
+              dynamic_params: { key: 'value' },
+              ai_insight: '<Hebrew justification of the adjustment>',
+              new_priority: '<integer or omit>',
+              reason: '<short Hebrew note on what changed>',
+            },
+          ],
           add: [
             {
               roadmap_goal_id: "<UUID from the determined step's task bank>",
+              aspiration_id:
+                '<UUID of the aspiration this task serves, or omit if none>',
               target_amount: '<number or null>',
               target_date: '<ISO-8601 string or null>',
               dynamic_params: { key: 'value' },
@@ -704,6 +785,7 @@ export class OpenFinanceService {
         remove: arr(tr.remove),
         reprioritize: arr(tr.reprioritize),
         complete: arr(tr.complete),
+        update: arr(tr.update),
         add: arr(tr.add),
       },
       progress_assessment: {
@@ -889,9 +971,45 @@ export class OpenFinanceService {
         touched.add(t);
       }
 
+      // Updates: re-tune an ACTIVE task's parameters when its linked aspiration
+      // changed. Marks the task synced against the aspiration's current revision.
+      const aspirationByIdForUpdate = new Map(
+        params.context.aspirations.map((a) => [a.aspirationId, a]),
+      );
+      const syncedAspirationIds = new Set<string>();
+      for (const u of decision.task_reconciliation.update) {
+        const t = byId.get(u.user_goal_id);
+        if (!t || t.status === UserGoalStatus.COMPLETED) continue;
+        if (u.target_amount !== undefined && u.target_amount !== null) {
+          t.targetAmount = u.target_amount;
+        }
+        if (u.target_date) t.targetDate = new Date(u.target_date);
+        if (u.dynamic_params != null) {
+          t.dynamicParams = u.dynamic_params as Record<string, any>;
+        }
+        if (u.ai_insight) t.aiInsight = u.ai_insight;
+        if (u.new_priority != null && Number.isFinite(Number(u.new_priority))) {
+          t.priority = Number(u.new_priority);
+        }
+        if (t.aspirationId) {
+          const asp = aspirationByIdForUpdate.get(t.aspirationId);
+          if (asp) {
+            t.syncedAspirationRevision = asp.revision;
+            syncedAspirationIds.add(asp.aspirationId);
+          }
+        }
+        touched.add(t);
+      }
+
       // Additions (dedup + reactivate to preserve identity, never duplicate)
+      const aspirationByIdForAdd = aspirationByIdForUpdate;
       for (const a of decision.task_reconciliation.add) {
         if (!allowedAddIds.has(a.roadmap_goal_id)) continue; // out-of-step / hallucinated id guard
+        // Only honor an aspiration link the user actually owns.
+        const linkedAspiration =
+          a.aspiration_id && aspirationByIdForAdd.has(a.aspiration_id)
+            ? aspirationByIdForAdd.get(a.aspiration_id)!
+            : null;
         const dup = byRoadmapId.get(a.roadmap_goal_id);
         if (dup) {
           if (dup.status === UserGoalStatus.COMPLETED) continue; // preserve completion, no duplicate
@@ -904,12 +1022,19 @@ export class OpenFinanceService {
           if (a.target_amount != null) dup.targetAmount = a.target_amount;
           if (a.target_date) dup.targetDate = new Date(a.target_date);
           dup.sourceProfileHistoryId = historyId;
+          if (linkedAspiration) {
+            dup.aspirationId = linkedAspiration.aspirationId;
+            dup.syncedAspirationRevision = linkedAspiration.revision;
+            syncedAspirationIds.add(linkedAspiration.aspirationId);
+          }
           touched.add(dup);
         } else {
           const template = templateMap.get(a.roadmap_goal_id);
           const created = manager.create(UserGoal, {
             userId,
             roadmapGoalId: a.roadmap_goal_id,
+            aspirationId: linkedAspiration?.aspirationId ?? null,
+            syncedAspirationRevision: linkedAspiration?.revision ?? null,
             goalName: template?.title ?? 'Unknown Goal',
             dynamicParams: a.dynamic_params ?? {},
             targetAmount: a.target_amount ?? undefined,
@@ -920,12 +1045,24 @@ export class OpenFinanceService {
             sourceProfileHistoryId: historyId,
             aiInsight: a.ai_insight,
           });
+          if (linkedAspiration) {
+            syncedAspirationIds.add(linkedAspiration.aspirationId);
+          }
           touched.add(created);
         }
       }
 
       if (touched.size) {
         await manager.save(UserGoal, Array.from(touched));
+      }
+
+      // Mark every aspiration whose linked tasks were just re-tuned as synced.
+      if (syncedAspirationIds.size) {
+        const syncedAspirations = params.context.aspirations.filter((a) =>
+          syncedAspirationIds.has(a.aspirationId),
+        );
+        for (const a of syncedAspirations) a.lastSyncedRevision = a.revision;
+        await manager.save(UserAspiration, syncedAspirations);
       }
 
       // Return the user's currently active tasks with their templates populated.

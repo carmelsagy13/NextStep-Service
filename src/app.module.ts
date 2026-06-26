@@ -11,6 +11,7 @@ import { FinancialAnalysisModule } from './financial-analysis/financial-analysis
 import { EventDetectionModule } from './event-detection/event-detection.module.js';
 import { RoadmapModule } from './roadmap/roadmap.module.js';
 import { GoalsModule } from './goals/goals.module.js';
+import { AspirationsModule } from './aspirations/aspirations.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.module.js';
 import { LlmClientModule } from './llm-client/llm-client.module.js';
@@ -47,6 +48,7 @@ import { LlmClientModule } from './llm-client/llm-client.module.js';
     EventDetectionModule,
     RoadmapModule,
     GoalsModule,
+    AspirationsModule,
     NotificationsModule,
     LlmOrchestratorModule,
   ],
