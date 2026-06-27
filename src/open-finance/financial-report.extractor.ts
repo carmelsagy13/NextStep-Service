@@ -1,7 +1,10 @@
 import {
   OFCheckingAccount,
   OFFinancialReport,
+  OFLoan,
   OFReportEnvelope,
+  OFSaving,
+  OFSavingTransaction,
 } from './financial-report.types.js';
 import {
   FinancialFeatures,
@@ -44,6 +47,47 @@ function sumCheckingBalance(accounts?: OFCheckingAccount[]): number {
   return accounts.reduce((acc, a) => acc + num(a?.amount), 0);
 }
 
+/**
+ * Sums a loan/mortgage account's repayment outflows (chargedAmount < 0) for the
+ * requested mainCategory. Repayments are negative, so we add their magnitude.
+ * Falls back to the account-level mainCategory when a transaction omits its own.
+ */
+function sumLoanRepayments(
+  loans: OFLoan[] | undefined,
+  category: 'LOANS' | 'MORTGAGE',
+): number {
+  if (!Array.isArray(loans)) return 0;
+  let total = 0;
+  for (const loan of loans) {
+    const txns = Array.isArray(loan?.transactions) ? loan.transactions : [];
+    for (const tx of txns) {
+      const cat = (tx?.mainCategory ?? loan?.mainCategory ?? '').toUpperCase();
+      const amount = num(tx?.chargedAmount);
+      if (cat === category && amount < 0) {
+        total += Math.abs(amount);
+      }
+    }
+  }
+  return total;
+}
+
+/** Normalises a savings movement (number or object) to a signed amount. */
+function savingTxnAmount(tx: number | OFSavingTransaction): number {
+  if (typeof tx === 'number') return num(tx);
+  return num(tx?.amount ?? tx?.chargedAmount);
+}
+
+/**
+ * Affordability ratio of a monthly debt-service payment to monthly disposable
+ * surplus. 0 when there is no payment; a 99 sentinel when a payment exists but
+ * surplus is non-positive (i.e. the user cannot afford it from disposable income).
+ */
+function affordabilityRatio(payment: number, surplus: number): number {
+  if (payment <= 0) return 0;
+  if (surplus <= 0) return 99;
+  return Math.round((payment / surplus) * 100) / 100;
+}
+
 
 /** Produces a fully-zeroed feature set (used for empty/invalid reports). */
 export function emptyFeatures(): FinancialFeatures {
@@ -66,6 +110,16 @@ export function emptyFeatures(): FinancialFeatures {
     totalDebt: 0,
     hasActiveLoans: false,
     hasMortgage: false,
+    monthlyLoanPayments: 0,
+    monthlyMortgagePayments: 0,
+    loanBalance: 0,
+    mortgageBalance: 0,
+    loanVSaffordability: 0,
+    mortgageVSaffordability: 0,
+    savingsAndSecuritiesBalance: 0,
+    monthlyDeposits: 0,
+    monthlyWithdrawals: 0,
+    avgBalanceLast3Month: 0,
     activeCreditCardsCount: 0,
     avgMonthlyCreditCardSpend: 0,
     creditCardFeesTotal: 0,
@@ -152,6 +206,19 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
   const totalMortgage = round(num(loansTotal.totalMortgageAmount));
   const totalDebt = totalLoans + totalMortgage;
 
+  // ── Macro debt-service (consumer loans vs mortgage, evaluated independently) ─
+  // Monthly repayment = sum of repayment outflows over the window / 3 months.
+  const loans = Array.isArray(report.loans)
+    ? (report.loans as OFLoan[])
+    : undefined;
+  const monthlyLoanPayments = round(sumLoanRepayments(loans, 'LOANS') / 3);
+  const monthlyMortgagePayments = round(
+    sumLoanRepayments(loans, 'MORTGAGE') / 3,
+  );
+  // Outstanding balances map directly to the provider's loan/mortgage totals.
+  const loanBalance = totalLoans;
+  const mortgageBalance = totalMortgage;
+
   // ── Credit cards ────────────────────────────────────────────────────────────
   const cardOutcomes = Array.isArray(report.creditCardOutcomes)
     ? report.creditCardOutcomes
@@ -184,6 +251,68 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
       ? Math.round((Math.max(0, discretionarySurplus) / monthlyIncome) * 100)
       : 0;
 
+  // Affordability of each debt-service stream against monthly disposable surplus.
+  const loanVSaffordability = affordabilityRatio(
+    monthlyLoanPayments,
+    discretionarySurplus,
+  );
+  const mortgageVSaffordability = affordabilityRatio(
+    monthlyMortgagePayments,
+    discretionarySurplus,
+  );
+
+  // ── Savings/securities balance & monthly flows ─────────────────────────────
+  const savingsAccounts = Array.isArray(report.savings)
+    ? (report.savings as OFSaving[])
+    : [];
+  const savingsBalance = savingsAccounts.reduce(
+    (acc, s) => acc + num(s?.amount),
+    0,
+  );
+  const savingsAndSecuritiesBalance = round(
+    savingsBalance + totalSecuritiesValue,
+  );
+
+  // Signed savings movements (deposits positive, withdrawals negative).
+  const savingsTxns: number[] = [];
+  for (const s of savingsAccounts) {
+    const list = Array.isArray(s?.savingsTransactions)
+      ? s.savingsTransactions
+      : [];
+    for (const tx of list) savingsTxns.push(savingTxnAmount(tx));
+  }
+  const positiveSavingsFlow = savingsTxns
+    .filter((a) => a > 0)
+    .reduce((acc, a) => acc + a, 0);
+  const negativeSavingsFlow = savingsTxns
+    .filter((a) => a < 0)
+    .reduce((acc, a) => acc + Math.abs(a), 0);
+  const securitiesAdditionTotal = Array.isArray(report.securities)
+    ? report.securities.reduce((acc, s) => acc + num(s?.securitiesAddition), 0)
+    : 0;
+  // Monthly deposits = (positive savings movements + securities additions) / 3.
+  const monthlyDeposits = round(
+    (positiveSavingsFlow + securitiesAdditionTotal) / 3,
+  );
+  // Monthly withdrawals = magnitude of negative savings movements / 3.
+  const monthlyWithdrawals = round(negativeSavingsFlow / 3);
+
+  // Mean balance over the last 3 monthly entries; closing-balance field when the
+  // provider supplies one, otherwise the single currentBalance snapshot.
+  const monthlyClosingBalances = (
+    Array.isArray(report.yearMonthBalance) ? report.yearMonthBalance : []
+  )
+    .slice(0, 3)
+    .map((m) => num(m?.balance ?? m?.endBalance ?? m?.closingBalance))
+    .filter((b) => b !== 0);
+  const avgBalanceLast3Month =
+    monthlyClosingBalances.length > 0
+      ? round(
+          monthlyClosingBalances.reduce((acc, b) => acc + b, 0) /
+            monthlyClosingBalances.length,
+        )
+      : currentBalance;
+
   // ── System / BDI counters ──────────────────────────────────────────────────
   const systemFlags = {
     loanOverDueCount: num(report.countLoanOverDue),
@@ -212,6 +341,16 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
     totalDebt,
     hasActiveLoans: totalLoans > 0,
     hasMortgage: totalMortgage > 0,
+    monthlyLoanPayments,
+    monthlyMortgagePayments,
+    loanBalance,
+    mortgageBalance,
+    loanVSaffordability,
+    mortgageVSaffordability,
+    savingsAndSecuritiesBalance,
+    monthlyDeposits,
+    monthlyWithdrawals,
+    avgBalanceLast3Month,
     activeCreditCardsCount,
     avgMonthlyCreditCardSpend,
     creditCardFeesTotal,

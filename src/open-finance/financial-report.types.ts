@@ -23,6 +23,20 @@ export interface OFYearMonthBalance {
   yearMonth?: string;
   sumIncome?: number;
   sumExpense?: number;
+  /**
+   * Closing/period balance for the month, when the provider supplies it. Used
+   * as the source for avgBalanceLast3Month; absent in some payloads (then we
+   * fall back to currentBalance).
+   */
+  balance?: number;
+  endBalance?: number;
+  closingBalance?: number;
+}
+
+/** A daily balance snapshot (`balancesPerDays[]`). Often empty in payloads. */
+export interface OFBalancePerDay {
+  date?: string;
+  balance?: number;
 }
 
 /** A regular income source inside `totalIncomesOutcome.regularIncomeSources[]`. */
@@ -78,6 +92,54 @@ export interface OFSecurity {
   averageBuyingPrice?: { amount?: number; currency?: string } | null;
   normalisedPrice?: number | null;
   totalValue?: number;
+  /**
+   * Net amount added to this security position over the reported window (a
+   * deposit/contribution figure). Summed into monthly_deposits when present.
+   */
+  securitiesAddition?: number;
+}
+
+/**
+ * A single signed savings movement (`savings[].savingsTransactions[]`). The
+ * provider may emit either a bare signed number or an object; the extractor
+ * accepts both. Positive = deposit, negative = withdrawal.
+ */
+export interface OFSavingTransaction {
+  amount?: number;
+  chargedAmount?: number;
+}
+
+/** A savings account (`savings[]`). Empty for users with no savings products. */
+export interface OFSaving {
+  accountNumber?: string;
+  parsedAccountNumber?: string;
+  providerId?: string;
+  /** Current accumulated balance of this savings account. */
+  amount?: number;
+  /** Signed deposit/withdrawal movements on this account. */
+  savingsTransactions?: Array<number | OFSavingTransaction>;
+}
+
+/**
+ * A single charge line on a loan/mortgage account (`loans[].transactions[]`).
+ * `chargedAmount < 0` is an outflow (a repayment); `mainCategory` distinguishes
+ * consumer loans ('LOANS') from mortgages ('MORTGAGE').
+ */
+export interface OFLoanTransaction {
+  chargedAmount?: number;
+  mainCategory?: string;
+}
+
+/** A loan or mortgage account (`loans[]`). Empty for users with no debt. */
+export interface OFLoan {
+  accountNumber?: string;
+  parsedAccountNumber?: string;
+  providerId?: string;
+  /** Account-level category fallback when transactions omit mainCategory. */
+  mainCategory?: string;
+  /** Outstanding balance fallback when loansTotal is unavailable. */
+  balance?: number;
+  transactions?: OFLoanTransaction[];
 }
 
 /** Loans & mortgage totals (`loansTotal`). */
@@ -101,17 +163,18 @@ export interface OFFinancialReport {
   checkingAccountsILS?: OFCheckingAccount[];
   checkingAccounts?: OFCheckingAccount[];
   yearMonthBalance?: OFYearMonthBalance[];
+  balancesPerDays?: OFBalancePerDay[];
   totalIncomesOutcome?: OFTotalIncomesOutcome;
 
   creditCardOutcomes?: OFCreditCardOutcome[];
   creditCardFees?: OFCreditCardFee[];
 
   savingsAndSecurities?: OFSavingsAndSecurities;
-  savings?: unknown[];
+  savings?: OFSaving[];
   securities?: OFSecurity[];
 
   loansTotal?: OFLoansTotal;
-  loans?: unknown[];
+  loans?: OFLoan[];
   totalLoans?: unknown[];
 
   // BDI / credit-behaviour counters (null when the provider has no data).

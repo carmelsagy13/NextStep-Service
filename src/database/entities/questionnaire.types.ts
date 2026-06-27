@@ -22,6 +22,10 @@ export enum QuestionType {
   MULTIPLE_CHOICE = 'MULTIPLE_CHOICE',
   TEXT = 'TEXT',
   NUMBER = 'NUMBER',
+  /** Calendar date picker. Answer is an ISO-8601 date string `YYYY-MM-DD`. */
+  DATE = 'DATE',
+  /** Time-span input. Answer is a whole number of MONTHS (non-negative integer). */
+  DURATION = 'DURATION',
 }
 
 /**
@@ -66,5 +70,9 @@ export interface QuestionValidation {
   pattern?: string;
 }
 
-/** A persisted answer value. Shape depends on the question's type. */
+/**
+ * A persisted answer value. Shape depends on the question's type:
+ * string for SINGLE_CHOICE/TEXT/DATE, number for NUMBER/DURATION, string[] for
+ * MULTIPLE_CHOICE. DATE is `YYYY-MM-DD`; DURATION is a whole number of months.
+ */
 export type AnswerValue = string | string[] | number;

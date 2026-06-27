@@ -30,7 +30,9 @@ export class AnswerItemDto {
   @ApiProperty({
     description:
       'The answer value. Shape depends on the question type: a string for ' +
-      'SINGLE_CHOICE/TEXT, a number for NUMBER, or a string[] for MULTIPLE_CHOICE.',
+      'SINGLE_CHOICE/TEXT, a number for NUMBER, a string[] for MULTIPLE_CHOICE, ' +
+      'an ISO-8601 date string (YYYY-MM-DD) for DATE, or a whole number of ' +
+      'months for DURATION.',
     oneOf: [
       { type: 'string' },
       { type: 'number' },

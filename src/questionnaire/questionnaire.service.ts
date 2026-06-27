@@ -637,17 +637,56 @@ export class QuestionnaireService {
         }
         return null;
       }
+      case QuestionType.DATE: {
+        if (typeof value !== 'string') {
+          return 'Expected an ISO-8601 date string (YYYY-MM-DD).';
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          return 'Expected a date in YYYY-MM-DD format.';
+        }
+        // Reject impossible dates (e.g. 2026-02-30) by round-tripping.
+        const parsed = new Date(`${value}T00:00:00Z`);
+        if (
+          Number.isNaN(parsed.getTime()) ||
+          parsed.toISOString().slice(0, 10) !== value
+        ) {
+          return 'Expected a valid calendar date.';
+        }
+        return null;
+      }
+      case QuestionType.DURATION: {
+        const num = typeof value === 'number' ? value : Number(value);
+        if (typeof value !== 'number' && (value === '' || Number.isNaN(num))) {
+          return 'Expected a whole number of months.';
+        }
+        if (Number.isNaN(num)) return 'Expected a whole number of months.';
+        if (!Number.isInteger(num)) {
+          return 'Duration must be a whole number of months.';
+        }
+        if (num < 0) return 'Duration must be zero or more months.';
+        if (v.min !== undefined && num < v.min) {
+          return `Must be at least ${v.min} month(s).`;
+        }
+        if (v.max !== undefined && num > v.max) {
+          return `Must be at most ${v.max} month(s).`;
+        }
+        return null;
+      }
       default:
         return 'Unsupported question type.';
     }
   }
 
-  /** Coerces NUMBER answers to a number; leaves other types as-is. */
+  /** Coerces NUMBER/DURATION answers to a number; leaves other types as-is. */
   private normalizeAnswer(
     question: QuestionnaireQuestion,
     value: AnswerValue,
   ): AnswerValue {
-    if (question.type === QuestionType.NUMBER && typeof value === 'string') {
+    if (
+      (question.type === QuestionType.NUMBER ||
+        question.type === QuestionType.DURATION) &&
+      typeof value === 'string'
+    ) {
       return Number(value);
     }
     return value;

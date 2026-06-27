@@ -54,6 +54,34 @@ export interface FinancialFeatures {
   hasActiveLoans: boolean;
   hasMortgage: boolean;
 
+  // ── Macro debt-service & flow metrics (consumer loans vs mortgage kept apart)
+  /** Avg monthly CONSUMER-loan repayment: Σ|loan tx chargedAmount<0, mainCategory=LOANS| / 3. */
+  monthlyLoanPayments: number;
+  /** Avg monthly MORTGAGE repayment: Σ|loan tx chargedAmount<0, mainCategory=MORTGAGE| / 3. */
+  monthlyMortgagePayments: number;
+  /** Outstanding consumer-loan balance (maps to loansTotal.totalLoansAmount). */
+  loanBalance: number;
+  /** Outstanding mortgage balance (maps to loansTotal.totalMortgageAmount). */
+  mortgageBalance: number;
+  /**
+   * Consumer-loan affordability: monthlyLoanPayments / discretionarySurplus.
+   * Higher = larger share of disposable income consumed. 0 when no payment;
+   * 99 sentinel when payments exist but surplus is non-positive (unaffordable).
+   */
+  loanVSaffordability: number;
+  /** Mortgage affordability: monthlyMortgagePayments / discretionarySurplus (same scale/sentinel). */
+  mortgageVSaffordability: number;
+
+  // ── Savings/securities balance & flows ───────────────────────────────────
+  /** Σ(savings[].amount) + totalSecuritiesValue. */
+  savingsAndSecuritiesBalance: number;
+  /** Avg monthly inflow to savings/securities: (Σ positive savingsTransactions + Σ securitiesAddition) / 3. */
+  monthlyDeposits: number;
+  /** Avg monthly outflow from savings: Σ|negative savingsTransactions| / 3. */
+  monthlyWithdrawals: number;
+  /** Mean balance across the last 3 yearMonthBalance entries (falls back to currentBalance). */
+  avgBalanceLast3Month: number;
+
   // ── Credit cards ──────────────────────────────────────────────────────────
   /** Distinct credit-card accounts seen in creditCardOutcomes. */
   activeCreditCardsCount: number;
