@@ -133,7 +133,14 @@ export function buildQuestionnairePromptSection(
     'Use these answers to COMPLEMENT the bank-derived figures and refine your',
     'assessment where the bank data is blind. The connected bank data remains',
     'authoritative for on-platform balances and cash flow — do NOT double-count an',
-    'item that already appears in the financial features. Answers are in Hebrew.',
+    'item that already appears in the financial features.',
+    'When a self-reported figure CONFLICTS with the bank-derived data (e.g. declared',
+    'liquid savings or an emergency fund the actual balances do not show), treat',
+    'NEITHER source as inherently absolute: apply judgment about which signal is more',
+    'reliable and contextually relevant for the specific decision at hand, settle on a',
+    'SINGLE reconciled view, and keep the state description, reasoning, and task',
+    'selection all CONSISTENT with that one resolution — do not act on both sides of',
+    'the contradiction at once. Answers are in Hebrew.',
     JSON.stringify(summary.answers, null, 2),
   ].join('\n');
 }
