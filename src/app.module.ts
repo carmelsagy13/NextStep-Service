@@ -15,6 +15,7 @@ import { AspirationsModule } from './aspirations/aspirations.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.module.js';
 import { LlmClientModule } from './llm-client/llm-client.module.js';
+import { DemoModule } from './demo/demo.module.js';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { LlmClientModule } from './llm-client/llm-client.module.js';
     AspirationsModule,
     NotificationsModule,
     LlmOrchestratorModule,
+    DemoModule,
   ],
 })
 export class AppModule {}

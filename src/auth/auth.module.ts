@@ -3,15 +3,19 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+// ConfigModule is already global — re-importing it here makes ConfigService
+// available in AuthService without a circular dependency.
 import { AuthService } from './auth.service.js';
 import { AuthController } from './auth.controller.js';
 import { JwtStrategy } from './jwt.strategy.js';
 import { User } from '../database/entities/user.entity.js';
+import { DemoModule } from '../demo/demo.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
+    DemoModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

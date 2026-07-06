@@ -27,6 +27,6 @@ import { UserProfile } from '../database/entities/user-profile.entity.js';
   ],
   controllers: [AspirationsController],
   providers: [AspirationsService, AspirationSyncService],
-  exports: [AspirationsService],
+  exports: [AspirationsService, AspirationSyncService],
 })
 export class AspirationsModule {}
