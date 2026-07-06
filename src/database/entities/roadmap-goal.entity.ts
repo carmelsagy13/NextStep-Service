@@ -5,6 +5,7 @@ export enum RoadmapGoalType {
   PERSONAL = 'personal',
   MARKETING = 'marketing',
   BONUS = 'bonus',
+  EDUCATIONAL = 'educational',
 }
 
 /**

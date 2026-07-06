@@ -74,7 +74,7 @@ export class LlmOrchestratorService {
       '',
       '## Output',
       'Respond EXCLUSIVELY with valid JSON — no markdown, no extra text:',
-      '{ "current_step": <integer 1-5> }',
+      '{ "current_step": <integer 1-5>, "reasoning": "<short explanation of WHY this stage: which criteria drove the decision>" }',
       buildQuestionnairePromptSection(questionnaire),
     ].join('\n');
 
@@ -83,10 +83,6 @@ export class LlmOrchestratorService {
     const parsed = JSON.parse(raw);
     const step = Math.min(5, Math.max(1, Number(parsed.current_step) || 1));
 
-    this.logger.log(
-      `[Step1-Classify] userId=${profile.userId} → step=${step} ` +
-        `(model raw current_step=${parsed?.current_step})`,
-    );
     return step;
   }
 
@@ -195,11 +191,6 @@ export class LlmOrchestratorService {
     );
 
     const dropped = recommendations.length - safe.length;
-    this.logger.log(
-      `[Step3-Personalize] userId=${profile.userId} ` +
-        `filteredGoals=${filteredGoals.length} aiReturned=${recommendations.length} ` +
-        `kept=${safe.length}${dropped > 0 ? ` droppedInvalid=${dropped}` : ''}`,
-    );
 
     const result = safe.map((r: any) => ({
       roadmap_goal_id: r.roadmap_goal_id,

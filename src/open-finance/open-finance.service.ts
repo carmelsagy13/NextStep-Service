@@ -30,10 +30,6 @@ import { FinancialFeatures } from './financial-features.model.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
 import { EventDetectionService } from '../event-detection/event-detection.service.js';
 import {
-  isRoadmapGoalEligible,
-  CriteriaScores,
-} from '../common/roadmap-goal-eligibility.js';
-import {
   QuestionnaireService,
   QuestionnaireSummary,
   buildQuestionnairePromptSection,
@@ -50,6 +46,8 @@ export interface AiCriteriaProfile {
   system_indicators: number;
   risk_level: string | null;
   knowledge_level: string | null;
+  /** Per-criterion explanation of the assigned 1–5 score (testing/debugging only, not persisted). */
+  criteria_reasoning?: Record<string, string>;
 }
 
 export interface GeminiAnalysisResult {
@@ -205,8 +203,6 @@ export class OpenFinanceService {
     bankingData: unknown,
     userId: string,
   ): Promise<PersistAnalysisResult> {
-    const __t0 = Date.now();
-    this.logger.log(`analyzeBankingJson START — userId=${userId}`);
     // 1. Fetch stage definitions and active goal templates from the DB in parallel.
     const [stages, goalTemplates] = await Promise.all([
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
@@ -227,6 +223,12 @@ export class OpenFinanceService {
     //    payload is an aggregated report, not a flat transactions list.
     const features: FinancialFeatures = extractFeatures(bankingData);
     const summaryJson = JSON.stringify(features);
+
+    // Full open-finance data dump for LLM-mechanism testing/debugging.
+    this.logger.log(
+      `[OpenFinance] Extracted financial features (userId=${userId}):\n` +
+        JSON.stringify(features, null, 2),
+    );
 
     // 2a. Persist the raw snapshot and detect data-backed events. These run in
     //     parallel with the LLM round-trips below; they don't block them.
@@ -273,13 +275,6 @@ export class OpenFinanceService {
     const currentStep = roadmapState.current_step;
     const context = await contextPromise;
 
-    // Log the LLM's task selection reasoning for transparency and debugging
-    this.logger.log(
-      `[AI] Task selection reasoning (userId=${userId}):\n` +
-        `  Why not added: ${decision.task_selection_reasoning.why_not_added}\n` +
-        `  Relevant but premature: ${decision.task_selection_reasoning.relevant_but_premature.join(', ') || 'none'}`,
-    );
-
     // 4. Persist the reconciliation result (non-destructive) within a transaction.
     const clientResponse = await this.applyReconciliation({
       userId,
@@ -294,19 +289,8 @@ export class OpenFinanceService {
     // Attach the task selection reasoning to the response
     clientResponse.task_selection_reasoning = decision.task_selection_reasoning;
 
-    this.logger.debug(
-      `[AI] Final response sent to client (userId=${userId}):\n` +
-        JSON.stringify(clientResponse, null, 2),
-    );
-
     // Ensure snapshot/event persistence has settled before responding.
     await sideEffects;
-
-    const __elapsed = Date.now() - __t0;
-    this.logger.log(
-      `analyzeBankingJson END — userId=${userId} took ${__elapsed} ms ` +
-        `(${(__elapsed / 1000).toFixed(2)} s)`,
-    );
 
     return clientResponse;
   }
@@ -426,6 +410,13 @@ export class OpenFinanceService {
       '- risk_level: one of "low" | "medium" | "high"',
       '- knowledge_level: one of "beginner" | "intermediate" | "advanced"',
       '',
+      '## Per-Criteria Reasoning',
+      'For EACH of the 8 criteria, write one short explanation of WHY you assigned',
+      'that 1–5 score: name the specific financial features (and questionnaire',
+      'answers, if present) you weighed and how they map to the stage definition.',
+      'Return these under `criteria_reasoning`, keyed by the same 8 criteria names.',
+      'Keep each explanation to one or two sentences.',
+      '',
       '## Required Output Schema (flat JSON object):',
       JSON.stringify({
         cash_flow: '<integer 1–5>',
@@ -438,6 +429,16 @@ export class OpenFinanceService {
         system_indicators: '<integer 1–5>',
         risk_level: '<string or null>',
         knowledge_level: '<string or null>',
+        criteria_reasoning: {
+          cash_flow: '<short explanation of the cash_flow score>',
+          credit_consumption: '<short explanation of the credit_consumption score>',
+          loans: '<short explanation of the loans score>',
+          savings_investments: '<short explanation of the savings_investments score>',
+          pension_long_term: '<short explanation of the pension_long_term score>',
+          lifestyle_clubs: '<short explanation of the lifestyle_clubs score>',
+          mortgage: '<short explanation of the mortgage score>',
+          system_indicators: '<short explanation of the system_indicators score>',
+        },
       }),
       '',
       '## Mapping questionnaire answers to the 8 criteria',
@@ -658,13 +659,14 @@ export class OpenFinanceService {
       'tasks and history, then return an ID-based reconciliation diff.',
       '',
       '## Reconciliation Rules',
-      '- FIRST set roadmap_state.current_step, then add goals from that step OR from criteria-tagged goals where the user has reached the required level in that specific criterion.',
-      '- Criteria-tagged goals (with a "criteria" field) become eligible independently of overall step: e.g. a "loans" goal at step 2 is eligible once the user\'s loans score >= 2, even if overall step is 1. The server re-validates eligibility, so you may propose them when relevant.',
+      '- FIRST set roadmap_state.current_step. Goals belonging to that step are the PRIMARY focus: prefer them and give them the strongest priority.',
+      '- You MAY ALSO add goals from ANY other step (higher or lower) when they are genuinely suitable for this user\'s financial situation. Current-step goals should rank above cross-step goals unless a cross-step goal is clearly more urgent for the user right now.',
+      '- Criteria-tagged goals (with a "criteria" field) are especially strong cross-step candidates: e.g. a "loans" goal at step 2 fits a user whose loans score is >= 2 even if their overall step is 1.',
       '- Reference existing tasks ONLY by their user_goal_id.',
       "- Reference new tasks ONLY by a roadmap_goal_id from the Available Goal Templates.",
       '- NEVER invent IDs. NEVER duplicate an existing task: if a relevant goal template',
       '  is already present among the existing tasks, KEEP or REPRIORITIZE it instead of adding it.',
-      '- Put tasks that are no longer relevant (e.g. left over from a previous step) into "remove".',
+      '- Put tasks that are no longer relevant (e.g. ones the user has outgrown or that no longer fit their situation) into "remove". Do NOT remove a task merely because it belongs to a different step than the current one — keep it if it is still suitable.',
       '- Put tasks the data shows are achieved into "complete".',
       '- Only "add" templates that are genuinely relevant and not already assigned.',
       '- When adding a goal, fill dynamic_params with REAL numbers taken from the financial features block (e.g. surplus, currentBalance, activeCreditCardsCount, totalInvestments). NEVER invent figures; if a value is not derivable from the features, use null.',
@@ -720,6 +722,8 @@ export class OpenFinanceService {
           current_step: '<integer 1–5>',
           progress_percentage: '<integer 0–100>',
           state_description: '<Hebrew string describing current state>',
+          step_reasoning:
+            '<explanation of WHY this stage was chosen: which financial features and stage-definition conditions drove the decision>',
         },
         task_reconciliation: {
           keep: [
@@ -751,7 +755,7 @@ export class OpenFinanceService {
           ],
           add: [
             {
-              roadmap_goal_id: "<UUID from the determined step's task bank>",
+              roadmap_goal_id: "<UUID from the Available Goal Templates (any step)>",
               aspiration_id:
                 '<UUID of the aspiration this task serves, or omit if none>',
               target_amount: '<number or null>',
@@ -776,6 +780,10 @@ export class OpenFinanceService {
       }),
       '',
       '## Task Selection Transparency',
+      'IMPORTANT: In roadmap_state.step_reasoning, explain WHY you placed the user',
+      'at the chosen stage: cite the financial features and the stage-definition',
+      'conditions that drove the decision (and the lowest-matching-stage rule when',
+      'risk signals override stronger indicators).',
       'IMPORTANT: In task_selection_reasoning.why_not_added, explain your decision-making:',
       '- Which goals from the Available Goal Templates were considered but NOT added, and why?',
       '- Are they irrelevant to this user\'s situation?',
@@ -787,8 +795,8 @@ export class OpenFinanceService {
       '',
       'When the questionnaire block below is present, let the user\'s SELF-DECLARED',
       'goals (e.g. buying a car, wedding, home equity, safety net, early retirement)',
-      'inform task prioritization — but you may still ONLY add goals that exist in',
-      'the determined step\'s task bank. Do not invent tasks from questionnaire goals.',
+      'inform task prioritization. You may add suitable goals from ANY step in the',
+      'Available Goal Templates. Do not invent tasks from questionnaire goals.',
       buildQuestionnairePromptSection(questionnaire),
       '',
       OpenFinanceService.STRICT_JSON_SUFFIX,
@@ -882,26 +890,10 @@ export class OpenFinanceService {
     const p = params.userProfile;
     const templateMap = new Map(params.goalTemplates.map((g) => [g.goalId, g]));
 
-    // Build criteria scores from the freshly-determined profile for eligibility check.
-    const criteriaScores: CriteriaScores = {
-      cash_flow: p.cash_flow,
-      credit_consumption: p.credit_consumption,
-      loans: p.loans,
-      savings_investments: p.savings_investments,
-      pension_long_term: p.pension_long_term,
-      lifestyle_clubs: p.lifestyle_clubs,
-      mortgage: p.mortgage,
-      system_indicators: p.system_indicators,
-    };
-
-    // Filter eligible goals: general (step match) OR criteria (per-criterion >= stepId).
-    const allowedAddIds = new Set(
-      params.goalTemplates
-        .filter((g) =>
-          isRoadmapGoalEligible(g, { currentStep, criteriaScores }),
-        )
-        .map((g) => g.goalId),
-    );
+    // Stage/eligibility limit removed: a goal from ANY step (or any per-criteria
+    // level) may be added. The only remaining guard is that the proposed id must
+    // be a real goal template from the task bank (anti-hallucination).
+    const allowedAddIds = new Set(params.goalTemplates.map((g) => g.goalId));
 
     const priorStep = params.context.currentProfile?.currentStep ?? null;
     const priorProgress = params.context.currentState?.progressPercent ?? null;
@@ -1052,7 +1044,7 @@ export class OpenFinanceService {
       // Additions (dedup + reactivate to preserve identity, never duplicate)
       const aspirationByIdForAdd = aspirationByIdForUpdate;
       for (const a of decision.task_reconciliation.add) {
-        if (!allowedAddIds.has(a.roadmap_goal_id)) continue; // out-of-step / hallucinated id guard
+        if (!allowedAddIds.has(a.roadmap_goal_id)) continue; // hallucinated id guard
         // Only honor an aspiration link the user actually owns.
         const linkedAspiration =
           a.aspiration_id && aspirationByIdForAdd.has(a.aspiration_id)

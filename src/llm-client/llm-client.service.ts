@@ -43,6 +43,7 @@ export class LlmClientService {
   // ─── Gemini config ───────────────────────────────────────────────────────
   private readonly gemini: GoogleGenerativeAI | null;
   private readonly geminiModel: string;
+  private readonly geminiMaxOutputTokens: number;
 
   constructor(private readonly config: ConfigService) {
     // 'college' (default) makes the College LLM primary; 'gemini' flips it.
@@ -107,6 +108,9 @@ export class LlmClientService {
       'GEMINI_MODEL',
       'gemini-2.5-flash',
     );
+    this.geminiMaxOutputTokens = Number(
+      this.config.get<string>('GEMINI_MAX_OUTPUT_TOKENS', '8192'),
+    );
 
     if (!this.collegeHttp && !this.gemini) {
       throw new InternalServerErrorException(
@@ -144,9 +148,6 @@ export class LlmClientService {
 
     const t0 = Date.now();
 
-    // Log exactly what the model is asked to do (input).
-    this.logLlmInput(label, primary.name, systemPrompt, userContent);
-
     if (primary.available) {
       try {
         const result = await primary.run();
@@ -182,29 +183,6 @@ export class LlmClientService {
   }
 
   // ─── Observability helpers ─────────────────────────────────────────────────
-
-  /** Logs the full prompt the model receives (system + user payload). */
-  private logLlmInput(
-    label: string,
-    provider: LlmProvider,
-    systemPrompt: string,
-    userContent: string,
-  ): void {
-    const model = provider === 'gemini' ? this.geminiModel : this.collegeModel;
-    const totalChars = systemPrompt.length + userContent.length;
-    this.logger.log(
-      `\n┌─ LLM REQUEST [${label}] ────────────────────────────────────────\n` +
-        `│ provider : ${provider}  |  model: ${model}\n` +
-        `│ input    : ${totalChars} chars ` +
-        `(system=${systemPrompt.length}, user=${userContent.length})\n` +
-        `├─ SYSTEM PROMPT ─────────────────────────────────────────────────\n` +
-        `${systemPrompt}\n` +
-        (userContent
-          ? `├─ USER CONTENT ──────────────────────────────────────────────────\n${userContent}\n`
-          : '') +
-        `└─────────────────────────────────────────────────────────────────`,
-    );
-  }
 
   /** Logs the raw model output plus provider/timing metadata. */
   private logLlmOutput(
@@ -246,6 +224,9 @@ export class LlmClientService {
           this.collegeApi === 'openai'
             ? await this.callCollegeOpenAi(systemPrompt, userContent)
             : await this.callCollegeOllama(systemPrompt, userContent);
+        if (!rawText.trim()) {
+          throw new Error('College LLM returned an empty response');
+        }
         return rawText;
       } catch (err: any) {
         lastErr = err;
@@ -338,6 +319,7 @@ export class LlmClientService {
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
+        maxOutputTokens: this.geminiMaxOutputTokens,
         // Disable "thinking" on 2.5 models — these are structured-JSON tasks.
         thinkingConfig: { thinkingBudget: 0 },
       } as any,
@@ -355,6 +337,11 @@ export class LlmClientService {
       try {
         const result = await model.generateContent(prompt);
         const rawText = (await result.response).text();
+        if (!rawText.trim()) {
+          throw new Error(
+            'Gemini returned an empty response (possible MAX_TOKENS or safety block)',
+          );
+        }
         return rawText;
       } catch (err: any) {
         lastErr = err;
