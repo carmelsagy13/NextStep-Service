@@ -19,6 +19,22 @@ export class UserProfileService {
     return profile;
   }
 
+  /**
+   * Persist the user's computed risk-tolerance category. Upserts the profile
+   * row because it may not exist yet at onboarding time (it is otherwise created
+   * lazily by the financial-analysis / roadmap flows).
+   */
+  async updateRiskTolerance(
+    userId: string,
+    riskTolerance: string,
+  ): Promise<void> {
+    const profile =
+      (await this.profileRepo.findOne({ where: { userId } })) ??
+      this.profileRepo.create({ userId });
+    profile.riskTolerance = riskTolerance;
+    await this.profileRepo.save(profile);
+  }
+
   /** Full assessment history (newest first) — abstracted level/criteria snapshots. */
   async getHistory(userId: string): Promise<UserProfileHistory[]> {
     return this.historyRepo.find({

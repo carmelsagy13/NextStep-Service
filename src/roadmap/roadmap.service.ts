@@ -31,7 +31,13 @@ export class RoadmapService {
         ? (steps.find((s) => s.stepId === currentStepId) ?? null)
         : null;
 
-    return { state, currentStepId, currentStep, steps };
+    return {
+      state,
+      currentStepId,
+      currentStep,
+      steps,
+      lossAversion: state?.lossAversion ?? null,
+    };
   }
 
   async updateRoadmap(

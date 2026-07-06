@@ -27,6 +27,8 @@ import {
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import { extractFeatures } from './financial-report.extractor.js';
 import { FinancialFeatures } from './financial-features.model.js';
+import { computeLossAversion } from '../loss-aversion/loss-aversion.engine.js';
+import type { LossAversionResult } from '../loss-aversion/loss-aversion.types.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
 import { EventDetectionService } from '../event-detection/event-detection.service.js';
 import {
@@ -275,6 +277,22 @@ export class OpenFinanceService {
     const currentStep = roadmapState.current_step;
     const context = await contextPromise;
 
+    // 3a. Compute the loss-aversion projection: money the user misses out on by
+    //     not advancing from their current stage to the next one. Pure, uses the
+    //     rich in-memory features + the determined current step.
+    const nextStageStep = stages.find((s) => s.stepId > currentStep) ?? null;
+    const lossAversion = computeLossAversion({
+      features,
+      currentStep,
+      nextStage: nextStageStep
+        ? {
+            stepId: nextStageStep.stepId,
+            title: nextStageStep.title ?? null,
+            titleHe: nextStageStep.titleHe ?? null,
+          }
+        : null,
+    });
+
     // 4. Persist the reconciliation result (non-destructive) within a transaction.
     const clientResponse = await this.applyReconciliation({
       userId,
@@ -284,6 +302,7 @@ export class OpenFinanceService {
       decision,
       goalTemplates,
       context,
+      lossAversion,
     });
 
     // Attach the task selection reasoning to the response
@@ -885,6 +904,7 @@ export class OpenFinanceService {
     decision: ReconciliationDecision;
     goalTemplates: RoadmapGoal[];
     context: UserReconciliationContext;
+    lossAversion: LossAversionResult;
   }): Promise<PersistAnalysisResult> {
     const { userId, currentStep, decision } = params;
     const p = params.userProfile;
@@ -909,6 +929,7 @@ export class OpenFinanceService {
       }
       state.progressPercent = newProgress;
       state.stateDescription = params.roadmapState.state_description;
+      state.lossAversion = params.lossAversion;
       const savedState = await manager.save(RoadmapState, state);
 
       // --- Upsert UserProfile with 8 granular criteria + demographics ---
@@ -925,7 +946,10 @@ export class OpenFinanceService {
       profile.lifestyleClubs = p.lifestyle_clubs;
       profile.mortgage = p.mortgage;
       profile.systemIndicators = p.system_indicators;
-      if (p.risk_level !== null) profile.riskTolerance = p.risk_level;
+      // Risk tolerance is OWNED EXCLUSIVELY by the Step-4 risk questionnaire
+      // (CONSERVATIVE/MODERATE/AGGRESSIVE via UserProfileService.updateRiskTolerance).
+      // The AI analysis must NEVER write it, so we intentionally do not touch
+      // profile.riskTolerance here.
       if (p.knowledge_level !== null)
         profile.knowledgeLevel = p.knowledge_level;
       await manager.save(UserProfile, profile);

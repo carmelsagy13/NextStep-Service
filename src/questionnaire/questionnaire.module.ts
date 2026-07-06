@@ -9,6 +9,7 @@ import { QuestionnaireDependency } from '../database/entities/questionnaire-depe
 import { QuestionnaireSubmission } from '../database/entities/questionnaire-submission.entity.js';
 import { QuestionnaireResponse } from '../database/entities/questionnaire-response.entity.js';
 import { AspirationsModule } from '../aspirations/aspirations.module.js';
+import { UserProfileModule } from '../user-profile/user-profile.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { AspirationsModule } from '../aspirations/aspirations.module.js';
       QuestionnaireResponse,
     ]),
     AspirationsModule,
+    UserProfileModule,
   ],
   controllers: [QuestionnaireController],
   providers: [QuestionnaireService],

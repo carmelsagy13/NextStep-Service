@@ -20,6 +20,11 @@ import {
   OnboardingGoalInput,
 } from '../aspirations/aspirations.service.js';
 import { UserAspirationStatus } from '../database/entities/user-aspiration.entity.js';
+import { UserProfileService } from '../user-profile/user-profile.service.js';
+import {
+  computeRiskTolerance,
+  isRiskQuestionKey,
+} from './risk-tolerance.js';
 
 /**
  * The overarching goals captured by the onboarding questionnaire are NO LONGER
@@ -150,6 +155,7 @@ export class QuestionnaireService {
     @InjectRepository(QuestionnaireResponse)
     private readonly responseRepo: Repository<QuestionnaireResponse>,
     private readonly aspirations: AspirationsService,
+    private readonly userProfile: UserProfileService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────
@@ -346,6 +352,17 @@ export class QuestionnaireService {
         userId,
         this.extractGoalSelections(answers),
       );
+    }
+
+    // Risk tolerance (Step 4): recompute whenever the payload touched any risk
+    // question. Uses the merged answer set (saved + incoming) so a partial edit
+    // of one risk answer still scores against the other two. computeRiskTolerance
+    // returns null until all three answers are present, in which case we skip.
+    if (dto.answers.some((a) => isRiskQuestionKey(a.questionKey))) {
+      const risk = computeRiskTolerance(answers);
+      if (risk) {
+        await this.userProfile.updateRiskTolerance(userId, risk.category);
+      }
     }
 
     return {
