@@ -1,8 +1,4 @@
 import { AxiosError } from 'axios';
-import {
-  TERMINAL_FAILURE_STATUSES,
-  TERMINAL_SUCCESS_STATUSES,
-} from './open-finance-api.constants.js';
 
 /** Resolves after the given number of milliseconds. */
 export function sleep(ms: number): Promise<void> {
@@ -29,22 +25,7 @@ export function firstString(...values: Array<unknown>): string | undefined {
   return undefined;
 }
 
-/** Extracts the `state` query parameter from an OAuth URL. */
-export function extractStateFromUrl(url: string): string | undefined {
-  try {
-    return new URL(url).searchParams.get('state') ?? undefined;
-  } catch {
-    const match = url.match(/[?&]state=([^&]+)/);
-    return match?.[1] ? decodeURIComponent(match[1]) : undefined;
-  }
-}
-
-/** True when a job status indicates successful completion. */
-export function isTerminalSuccess(status: string): boolean {
-  return TERMINAL_SUCCESS_STATUSES.includes(status.toLowerCase());
-}
-
-/** True when a job status indicates terminal failure. */
-export function isTerminalFailure(status: string): boolean {
-  return TERMINAL_FAILURE_STATUSES.includes(status.toLowerCase());
+/** Formats a Date as `YYYY-MM-DD`, the format the /v2/data filters expect. */
+export function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }

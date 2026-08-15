@@ -17,7 +17,6 @@ import { OpenFinanceApiService } from '../open-finance/open-finance-api.service.
 import { ConnectApiResult } from '../open-finance/open-finance-api.types.js';
 import { AspirationSyncService } from '../aspirations/aspiration-sync.service.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
-import { User } from '../database/entities/user.entity.js';
 
 export interface DemoTriggerResult {
   /** Whether the full LLM pipeline or the lightweight partial sync was run. */
@@ -39,8 +38,6 @@ export class DemoService {
     private readonly openFinance: OpenFinanceService,
     private readonly openFinanceApi: OpenFinanceApiService,
     private readonly aspirationSync: AspirationSyncService,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
     @InjectRepository(UserProfile)
     private readonly profileRepo: Repository<UserProfile>,
   ) {}
@@ -63,7 +60,6 @@ export class DemoService {
    *     national ID (same pipeline as POST /openfinance/connect-api).
    *
    * @throws ForbiddenException  when DEMO_MODE is not enabled.
-   * @throws InternalServerErrorException  when the user record cannot be found.
    */
   async runFull(userId: string): Promise<DemoTriggerResult> {
     if (!this.isDemoMode()) {
@@ -86,14 +82,7 @@ export class DemoService {
     this.logger.log(
       `[Demo] LOGIN full pipeline for userId=${userId} via Open Finance API.`,
     );
-    const user = await this.userRepo.findOne({ where: { userId } });
-    if (!user) {
-      throw new InternalServerErrorException(
-        `Demo trigger: user record not found for userId=${userId}.`,
-      );
-    }
-    // Mirrors POST /openfinance/connect-api: user.id is the OF external customer ID.
-    const full = await this.openFinanceApi.connectAndAnalyze(user.id, userId);
+    const full = await this.openFinanceApi.connectAndAnalyze(userId);
     return { mode: 'full', source: 'api', full };
   }
 

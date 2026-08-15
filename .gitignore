@@ -12,6 +12,11 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+# Data diagnostics output — contains real account balances, income/expense
+# figures, card product names and user IDs. Never commit.
+data-audit*.log
+/diagnostics-output
+
 # OS
 .DS_Store
 myData.json

@@ -8,7 +8,6 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nes
 import { AuthGuard } from '@nestjs/passport';
 import { OpenFinanceService } from './open-finance.service.js';
 import { OpenFinanceApiService } from './open-finance-api.service.js';
-import { ConnectApiDto } from './dto/connect-api.dto.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
 @ApiTags('Open Finance')
@@ -91,11 +90,8 @@ export class OpenFinanceController {
   @ApiOperation({
     summary: 'Fetch financial data via the Open Finance API and persist it through the existing analysis pipeline',
   })
-  connectApi(
-    @Body() body: ConnectApiDto,
-    @CurrentUser() user: { userId: string },
-  ) {
-    return this.openFinanceApiService.connectAndAnalyze(body.externalUserId, user.userId);
+  connectApi(@CurrentUser() user: { userId: string }) {
+    return this.openFinanceApiService.connectAndAnalyze(user.userId);
   }
 
   /**

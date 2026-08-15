@@ -16,6 +16,7 @@ import { NotificationsModule } from './notifications/notifications.module.js';
 import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.module.js';
 import { LlmClientModule } from './llm-client/llm-client.module.js';
 import { DemoModule } from './demo/demo.module.js';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { DemoModule } from './demo/demo.module.js';
     NotificationsModule,
     LlmOrchestratorModule,
     DemoModule,
+    DiagnosticsModule,
   ],
 })
 export class AppModule {}

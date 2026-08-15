@@ -93,7 +93,11 @@ export interface FinancialFeatures {
   // ── Derived ratios ────────────────────────────────────────────────────────
   /** % of monthly income directed to savings/investments contributions. */
   savingsRate: number;
-  /** monthlyIncome - monthlyExpenses (provider already nets debt into expenses). */
+  /**
+   * monthlyIncome - monthlyExpenses. Disposable surplus BEFORE debt service:
+   * loan and mortgage repayments are excluded from monthlyExpenses and modelled
+   * separately as monthlyLoanPayments / monthlyMortgagePayments.
+   */
   discretionarySurplus: number;
 
   // ── System / BDI indicators (counts; null in report → 0) ─────────────────

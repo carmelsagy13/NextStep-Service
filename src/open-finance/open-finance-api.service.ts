@@ -4,46 +4,85 @@ import {
   UnauthorizedException,
   ForbiddenException,
   BadGatewayException,
-  RequestTimeoutException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import { User } from '../database/entities/user.entity.js';
 import { OpenFinanceService } from './open-finance.service.js';
 import {
   ConnectApiResult,
   OFConnection,
   OFConnectionsResponse,
-  OFCreateConnectionResponse,
-  OFCreateReportResponse,
-  OFFinancialReportResponse,
-  OFInitConnectionResponse,
   OFTokenResponse,
 } from './open-finance-api.types.js';
+import type {
+  OFBalanceHistory,
+  OFDataAccount,
+  OFDataTransaction,
+  OFMonthlyReport,
+  OFPaginated,
+  OFSlimTransaction,
+} from './open-finance-data.types.js';
+import type { OFFinancialReport } from './financial-report.types.js';
+import { buildFinancialReport } from './open-finance-data.aggregator.js';
 import {
-  DEFAULT_SANDBOX_PROVIDER_ID,
+  DATA_FETCH_MAX_ATTEMPTS,
+  DATA_FETCH_RETRY_DELAY_MS,
+  DATA_MAX_PAGES,
+  DATA_PAGE_SIZE,
   HTTP_TIMEOUT_MS,
-  JOB_CREATE_MAX_ATTEMPTS,
-  JOB_CREATE_RETRY_DELAY_MS,
-  POLL_INTERVAL_MS,
-  POLL_TIMEOUT_MS,
   TOKEN_DEFAULT_TTL_SECONDS,
   TOKEN_EXPIRY_SKEW_MS,
+  TX_HISTORY_MONTHS,
 } from './open-finance-api.constants.js';
 import {
   describeAxiosError,
-  extractStateFromUrl,
   firstString,
-  isTerminalFailure,
-  isTerminalSuccess,
   sleep,
+  toIsoDate,
 } from './open-finance-api.utils.js';
+import {
+  auditAccountBalances,
+  auditRawCollection,
+  auditRawObject,
+} from '../diagnostics/open-finance-audit.js';
 
 /**
  * Integrates with the Open Finance API to fetch a customer's financial data
- * and hand it to the existing LLM-based analyzer. The connection is created and
- * activated programmatically (no consent UI) via the open-banking init/finalize
- * endpoints, which works for sandbox providers.
+ * and hand it to the existing LLM-based analyzer.
+ *
+ * Connections are provisioned out-of-band — `POST /v2/connections` and the
+ * open-banking init/finalize endpoints are no longer available to us, so this
+ * service only reads the connections that already exist.
+ *
+ * The aggregated `POST /financial-report/{customerId}` + `GET
+ * /financial-report/{jobId}` job is likewise gone, so the report is rebuilt
+ * locally from the raw data endpoints (`/v2/data/accounts`,
+ * `/v2/data/transactions`, `/v2/data/accounts/{id}/balances/history` and
+ * `/v2/data/monthly-report/{userId}`) — see the aggregator for the mapping.
  */
+
+/** Keeps only the transaction fields the aggregator reads. */
+function slimTransaction(tx: OFDataTransaction): OFSlimTransaction {
+  return {
+    accountId: tx?.accountId,
+    accountNumber: tx?.accountNumber,
+    providerId: tx?.providerId,
+    status: tx?.status,
+    isDuplicate: tx?.isDuplicate,
+    amount: {
+      chargedAmount: tx?.amount?.chargedAmount,
+      originalAmount: tx?.amount?.originalAmount,
+    },
+    date: tx?.date,
+    category: tx?.category,
+    changedCategory: tx?.changedCategory,
+    balancePerEndDay: tx?.balancePerEndDay,
+  };
+}
+
 @Injectable()
 export class OpenFinanceApiService {
   private readonly logger = new Logger(OpenFinanceApiService.name);
@@ -56,7 +95,11 @@ export class OpenFinanceApiService {
   private cachedToken: string | null = null;
   private cachedTokenExpiresAt = 0;
 
-  constructor(private readonly openFinanceService: OpenFinanceService) {
+  constructor(
+    private readonly openFinanceService: OpenFinanceService,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+  ) {
     const baseUrl = process.env.OF_BASE_URL;
     const clientId = process.env.OF_CLIENT_ID;
     const clientSecret = process.env.OF_CLIENT_SECRET;
@@ -79,42 +122,33 @@ export class OpenFinanceApiService {
   }
 
   /**
-   * Runs the full flow: authenticate → ensure an active connection → create and
-   * poll a financial-report job → analyze and persist the result.
+   * Runs the full flow: authenticate → resolve the customer's connections → pull
+   * the raw accounts/transactions → aggregate into a financial report → analyze
+   * and persist the result.
    */
-  async connectAndAnalyze(
-    externalUserId: string,
-    userId: string,
-  ): Promise<ConnectApiResult> {
+  async connectAndAnalyze(userId: string): Promise<ConnectApiResult> {
+    const user = await this.userRepo.findOne({ where: { userId } });
+    if (!user) {
+      throw new InternalServerErrorException(
+        `User record not found for userId=${userId}.`,
+      );
+    }
+    // user.id (national ID) is the Open Finance external customer ID.
+    const externalUserId = user.id;
+
     this.logger.log(`connectAndAnalyze START — customer=${externalUserId}`);
 
     const token = await this.authenticate();
-    try {
-      await this.ensureActiveConnection(token, externalUserId);
-    } catch (err) {
-      // A 403 during connection setup (e.g. open-banking finalize) shouldn't
-      // block the flow — the connection may already be usable. Proceed to the
-      // report job anyway and let polling surface any real data problem.
-      if (err instanceof ForbiddenException) {
-        this.logger.warn(
-          `Connection setup returned 403 — proceeding to report anyway: ${err.message}`,
-        );
-      } else {
-        throw err;
-      }
-    }
+    const connectionIds = await this.activeConnectionIds(token, externalUserId);
 
-    const jobId = await this.createFinancialReportJob(token, externalUserId);
-    const report = await this.pollFinancialReport(token, jobId);
-
-    if (!report.financialReport || typeof report.financialReport !== 'object') {
-      throw new BadGatewayException(
-        'Open Finance returned a completed job without a financialReport payload',
-      );
-    }
+    const report = await this.fetchAggregatedReport(
+      token,
+      externalUserId,
+      connectionIds,
+    );
 
     const analysis = await this.openFinanceService.analyzeBankingJson(
-      report.financialReport,
+      report,
       userId,
     );
 
@@ -182,20 +216,16 @@ export class OpenFinanceApiService {
 
   // -------------------- Connection --------------------
 
-  /** Ensures the customer has an active connection, creating one if needed. */
-  private async ensureActiveConnection(
+  /**
+   * Active connection ids belonging to the customer, used to scope the data
+   * queries. Connections are provisioned out-of-band (the consent journey) — we
+   * only read them. Connections that don't expose an owner field are kept, so an
+   * unexpected provider shape degrades to "any active connection".
+   */
+  private async activeConnectionIds(
     token: string,
-    psuId: string,
-  ): Promise<void> {
-    if (await this.hasActiveConnection(token)) {
-      this.logger.log('Active connection found — proceeding to report');
-      return;
-    }
-    this.logger.log('No active connection — creating and activating');
-    await this.createAndActivateConnection(token, psuId);
-  }
-
-  private async hasActiveConnection(token: string): Promise<boolean> {
+    customerId: string,
+  ): Promise<string[]> {
     try {
       const { data } = await this.http.get<
         OFConnectionsResponse | OFConnection[]
@@ -205,212 +235,299 @@ export class OpenFinanceApiService {
       const list = Array.isArray(data)
         ? data
         : (data?.connections ?? data?.data ?? []);
-      return list.some((c) => c.status?.toUpperCase() === 'ACTIVE');
+      const ids = list
+        .filter((c) => c.status?.toUpperCase() === 'ACTIVE')
+        .filter((c) => {
+          const owner = firstString(c.customerId, c.psuId);
+          return !owner || owner === customerId;
+        })
+        .map((c) => firstString(c.id, c._id, c.connectionId))
+        .filter((id): id is string => Boolean(id));
+
+      if (ids.length === 0) {
+        this.logger.warn(
+          `No active connection for customer ${customerId} — querying data unscoped`,
+        );
+      }
+      return ids;
     } catch (err) {
       this.logger.error(
-        `hasActiveConnection FAILED: ${describeAxiosError(err as AxiosError)}`,
+        `activeConnectionIds FAILED: ${describeAxiosError(err as AxiosError)}`,
       );
-      return false;
+      return [];
     }
+  }
+
+  // -------------------- Financial data --------------------
+
+  /**
+   * Pulls the customer's raw data and rebuilds the aggregated financial report
+   * locally. A freshly-activated connection may still be syncing, so an empty
+   * account list is retried before it is treated as an error.
+   */
+  private async fetchAggregatedReport(
+    token: string,
+    customerId: string,
+    connectionIds: string[],
+  ): Promise<OFFinancialReport> {
+    let accounts: OFDataAccount[] = [];
+    for (let attempt = 1; attempt <= DATA_FETCH_MAX_ATTEMPTS; attempt++) {
+      accounts = await this.fetchAccounts(token, connectionIds);
+      if (accounts.length > 0) break;
+      if (attempt < DATA_FETCH_MAX_ATTEMPTS) {
+        this.logger.warn(
+          `No accounts yet (attempt ${attempt}/${DATA_FETCH_MAX_ATTEMPTS}) — ` +
+            `retrying in ${DATA_FETCH_RETRY_DELAY_MS / 1000}s`,
+        );
+        await sleep(DATA_FETCH_RETRY_DELAY_MS);
+      }
+    }
+
+    if (accounts.length === 0) {
+      throw new BadGatewayException(
+        `Open Finance returned no accounts for customer ${customerId}`,
+      );
+    }
+
+    const now = new Date();
+    const fromDate = new Date(now);
+    fromDate.setUTCMonth(fromDate.getUTCMonth() - TX_HISTORY_MONTHS);
+    fromDate.setUTCDate(1);
+
+    // Testing escape hatch: skips the heaviest call at the cost of every
+    // transaction-derived feature (cash-flow history, debt service, card spend).
+    const skipTransactions = process.env.OF_SKIP_TRANSACTIONS === 'true';
+    if (skipTransactions) {
+      this.logger.warn(
+        'OF_SKIP_TRANSACTIONS=true — transaction-derived features will be zero',
+      );
+    }
+
+    const transactions = skipTransactions
+      ? []
+      : await this.fetchTransactions(
+          token,
+          connectionIds,
+          toIsoDate(fromDate),
+          toIsoDate(now),
+        );
+
+    const [balanceHistories, monthlyReport] = await Promise.all([
+      this.fetchBalanceHistories(
+        token,
+        accounts,
+        toIsoDate(fromDate),
+        toIsoDate(now),
+      ),
+      this.fetchMonthlyReport(token, customerId),
+    ]);
+
+    this.logger.log(
+      `Fetched ${accounts.length} accounts, ${transactions.length} transactions, ` +
+        `${balanceHistories.length} balance series, monthlyReport=${monthlyReport ? 'yes' : 'no'}`,
+    );
+
+    auditRawCollection(
+      this.logger,
+      '/v2/data/accounts',
+      accounts,
+      'accountType',
+    );
+    auditAccountBalances(this.logger, accounts);
+    auditRawObject(
+      this.logger,
+      '/v2/data/balances/history',
+      balanceHistories[0] ?? null,
+    );
+    auditRawObject(this.logger, '/v2/data/monthly-report', monthlyReport);
+
+    const report = buildFinancialReport({
+      customerId,
+      accounts,
+      transactions,
+      monthlyReport,
+      balanceHistories,
+      now,
+    });
+
+    const cashFlow = (report.yearMonthBalance ?? [])
+      .map(
+        (m) =>
+          `${m.yearMonth} in=${m.sumIncome} out=${m.sumExpense} bal=${m.balance ?? 'n/a'}`,
+      )
+      .join(' | ');
+    this.logger.log(`Cash-flow by month: ${cashFlow || '(none)'}`);
+
+    const sas = report.savingsAndSecurities ?? {};
+    const flows = report.capitalFlows ?? {};
+    this.logger.log(
+      `Wealth: totalSavings=${sas.totalSavings ?? 0}, ` +
+        `totalSecuritiesValue=${sas.totalSecuritiesValue ?? 0} | ` +
+        `capitalFlows over ${flows.windowMonths ?? 0}mo: ` +
+        `contributions=${flows.contributions ?? 0}, redemptions=${flows.redemptions ?? 0}`,
+    );
+
+    return report;
+  }
+
+  /** GET /v2/data/accounts, once per connection (or unscoped when unknown). */
+  private async fetchAccounts(
+    token: string,
+    connectionIds: string[],
+  ): Promise<OFDataAccount[]> {
+    const scopes = connectionIds.length > 0 ? connectionIds : [undefined];
+    const results: OFDataAccount[] = [];
+    for (const connectionId of scopes) {
+      results.push(
+        ...(await this.fetchAllPages<OFDataAccount>(
+          token,
+          '/v2/data/accounts',
+          connectionId ? { connectionId } : {},
+          'accounts fetch',
+        )),
+      );
+    }
+    // The same account can be returned under several connections.
+    const unique = new Map<string, OFDataAccount>();
+    for (const account of results) {
+      unique.set(String(account?.id ?? Math.random()), account);
+    }
+    return [...unique.values()];
   }
 
   /**
-   * Creates a connection and activates it programmatically via the
-   * open-banking init/finalize endpoints. Data availability is handled by the
-   * report-polling loop, so no fixed wait is needed here.
+   * GET /v2/data/transactions for the requested window. `limit` must not be
+   * combined with the date filters, so pagination relies on `nextPage` alone.
+   * Each page is projected onto the slim shape immediately so the bulky
+   * provider payload is never accumulated.
    */
-  private async createAndActivateConnection(
+  private async fetchTransactions(
     token: string,
-    psuId: string,
-  ): Promise<void> {
-    const connectionId = await this.createConnection(token, psuId);
-    const state = await this.initOpenBanking(token, connectionId, psuId);
-    await this.finalizeOpenBanking(token, state);
-    this.logger.log(`Connection ${connectionId} activated`);
-  }
-
-  private async createConnection(
-    token: string,
-    customerId: string,
-  ): Promise<string> {
-    try {
-      const { data } = await this.http.post<OFCreateConnectionResponse>(
-        '/v2/connections',
+    connectionIds: string[],
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<OFSlimTransaction[]> {
+    const scopes = connectionIds.length > 0 ? connectionIds : [undefined];
+    const results: OFSlimTransaction[] = [];
+    for (const connectionId of scopes) {
+      const page = await this.fetchAllPages<OFDataTransaction>(
+        token,
+        '/v2/data/transactions',
         {
-          customerId,
-          includeFakeProviders:
-            process.env.OF_INCLUDE_FAKE_PROVIDERS === 'true',
-          refreshData: true,
+          dateFrom,
+          dateTo,
+          sort: 1,
+          includeDuplicates: 0,
+          ...(connectionId ? { connectionId } : {}),
         },
-        { headers: { Authorization: `Bearer ${token}` } },
+        'transactions fetch',
+        { usePageSize: false },
       );
-
-      const connectionId = firstString(data?.id, data?._id, data?.connectionId);
-      if (!connectionId) {
-        throw new BadGatewayException(
-          'Open Finance /v2/connections did not return a connectionId',
-        );
-      }
-      return connectionId;
-    } catch (err) {
-      throw this.toHttpException(err, 'connection creation');
+      // Audited before slimming so provider-side schema drift stays visible.
+      auditRawCollection(this.logger, '/v2/data/transactions', page);
+      results.push(...page.map(slimTransaction));
     }
+    return results;
   }
 
-  /** POST /v2/connect/open-banking-init → returns the `state` for finalize. */
-  private async initOpenBanking(
+  /**
+   * Daily end-of-day balances per checking account. Best-effort: the provider
+   * returns 422 when an account has no balance to anchor the reconstruction on.
+   */
+  private async fetchBalanceHistories(
     token: string,
-    connectionId: string,
-    psuId: string,
-  ): Promise<string> {
-    const providerId =
-      process.env.OF_SANDBOX_PROVIDER_ID || DEFAULT_SANDBOX_PROVIDER_ID;
-    try {
-      const { data } = await this.http.post<OFInitConnectionResponse>(
-        '/v2/connect/open-banking-init',
-        { providerId, connectionId, psuId },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-
-      const scaOAuthUrl = firstString(
-        data?.scaOAuth,
-        data?.connection?.scaOAuth,
-      );
-      const state = scaOAuthUrl ? extractStateFromUrl(scaOAuthUrl) : undefined;
-      if (!state) {
-        throw new BadGatewayException(
-          'open-banking-init did not return a scaOAuth URL containing a state param',
-        );
-      }
-      return state;
-    } catch (err) {
-      throw this.toHttpException(err, 'open-banking-init');
-    }
-  }
-
-  /** GET /v2/connect/open-banking-finalize — activates the connection. */
-  private async finalizeOpenBanking(
-    token: string,
-    state: string,
-  ): Promise<void> {
-    try {
-      await this.http.get('/v2/connect/open-banking-finalize', {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { state },
-      });
-    } catch (err) {
-      throw this.toHttpException(err, 'open-banking-finalize');
-    }
-  }
-
-  // -------------------- Financial report --------------------
-
-  private async createFinancialReportJob(
-    token: string,
-    customerId: string,
-  ): Promise<string> {
-    // A connection that was just activated may not be report-ready yet (bank
-    // data still syncing), so the first attempt can return without a jobId or
-    // fail transiently. Retry a few times before surfacing an error — this is
-    // what made the *first* request flaky while retries "just worked".
-    let lastErr: unknown;
-    let lastReason = 'unknown';
-    for (let attempt = 1; attempt <= JOB_CREATE_MAX_ATTEMPTS; attempt++) {
-      try {
-        const { data } = await this.http.post<OFCreateReportResponse>(
-          `/v2/financial-report/${encodeURIComponent(customerId)}`,
-          {},
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-
-        const jobId = firstString(data?.jobId, data?.job_id, data?.id);
-        if (jobId) {
-          this.logger.log(
-            `Financial-report job created — jobId=${jobId}` +
-              (attempt > 1 ? ` (attempt ${attempt})` : ''),
-          );
-          return jobId;
-        }
-
-        // 2xx but no jobId — bank data almost certainly still syncing. Capture
-        // the raw body so we can see whether the provider hints at a status.
-        lastReason = `no jobId in response body: ${JSON.stringify(data)?.slice(0, 200)}`;
-        lastErr = new BadGatewayException(
-          `Open Finance /v2/financial-report/${customerId} did not return a jobId`,
-        );
-      } catch (err) {
-        lastErr = err;
-        const ax = err as AxiosError;
-        const status = ax.response?.status;
-        const body = ax.response?.data
-          ? JSON.stringify(ax.response.data).slice(0, 200)
-          : ax.message;
-        lastReason = `HTTP ${status ?? '?'} — ${body}`;
-      }
-
-      if (attempt < JOB_CREATE_MAX_ATTEMPTS) {
-        this.logger.warn(
-          `Financial-report not ready (attempt ${attempt}/${JOB_CREATE_MAX_ATTEMPTS}) — ` +
-            `reason: ${lastReason} — retrying in ${JOB_CREATE_RETRY_DELAY_MS / 1000}s`,
-        );
-        await sleep(JOB_CREATE_RETRY_DELAY_MS);
-      }
-    }
-
-    throw this.toHttpException(lastErr, 'job creation');
-  }
-
-  private async pollFinancialReport(
-    token: string,
-    jobId: string,
-  ): Promise<OFFinancialReportResponse> {
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
-    let lastStatus: string | undefined;
-
-    this.logger.log(
-      `Polling job ${jobId} (timeout=${POLL_TIMEOUT_MS / 1000}s)`,
+    accounts: OFDataAccount[],
+    fromDate: string,
+    toDate: string,
+  ): Promise<OFBalanceHistory[]> {
+    const checking = accounts.filter(
+      (a) => String(a?.accountType ?? '').toUpperCase() === 'CHECKING' && a?.id,
     );
 
-    while (Date.now() < deadline) {
-      let data: OFFinancialReportResponse;
+    const histories = await Promise.all(
+      checking.map(async (account) => {
+        try {
+          const { data } = await this.http.get<OFBalanceHistory>(
+            `/v2/data/accounts/${encodeURIComponent(String(account.id))}/balances/history`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { fromDate, toDate },
+            },
+          );
+          return data;
+        } catch (err) {
+          this.logger.warn(
+            `balances/history unavailable for account ${account.id}: ` +
+              describeAxiosError(err as AxiosError),
+          );
+          return null;
+        }
+      }),
+    );
+    return histories.filter((h): h is OFBalanceHistory => h != null);
+  }
+
+  /**
+   * GET /v2/data/monthly-report/{userId}. This is the only remaining source of
+   * the behavioural counters (NSF, foreclosures, restriction notices…). A 404
+   * means the report is still being generated, so it is treated as "absent"
+   * rather than as a failure.
+   */
+  private async fetchMonthlyReport(
+    token: string,
+    customerId: string,
+  ): Promise<OFMonthlyReport | null> {
+    try {
+      const { data } = await this.http.get<OFMonthlyReport>(
+        `/v2/data/monthly-report/${encodeURIComponent(customerId)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return data;
+    } catch (err) {
+      this.logger.warn(
+        `monthly-report unavailable for customer ${customerId}: ` +
+          describeAxiosError(err as AxiosError),
+      );
+      return null;
+    }
+  }
+
+  /** Walks a cursor-paginated /v2/data endpoint until it runs out of pages. */
+  private async fetchAllPages<T>(
+    token: string,
+    path: string,
+    params: Record<string, unknown>,
+    context: string,
+    options: { usePageSize?: boolean } = {},
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let nextPage: string | undefined;
+
+    for (let page = 0; page < DATA_MAX_PAGES; page++) {
+      let data: OFPaginated<T>;
       try {
-        const res = await this.http.get<OFFinancialReportResponse>(
-          `/v2/financial-report/${encodeURIComponent(jobId)}`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
+        const res = await this.http.get<OFPaginated<T>>(path, {
+          headers: { Authorization: `Bearer ${token}` },
+          params: {
+            ...params,
+            ...(options.usePageSize === false ? {} : { limit: DATA_PAGE_SIZE }),
+            ...(nextPage ? { nextPage } : {}),
+          },
+        });
         data = res.data;
       } catch (err) {
-        const ax = err as AxiosError;
-        if (ax.response?.status === 404) {
-          // Job not yet visible — keep polling within the deadline.
-          await sleep(POLL_INTERVAL_MS);
-          continue;
-        }
-        throw this.toHttpException(err, 'polling');
+        throw this.toHttpException(err, context);
       }
 
-      lastStatus = typeof data?.status === 'string' ? data.status : undefined;
-      if (lastStatus && isTerminalSuccess(lastStatus)) {
-        // A success status can arrive before the report payload is populated
-        // (bank data still syncing) — keep polling until the data is present.
-        if (data.financialReport && typeof data.financialReport === 'object') {
-          this.logger.log(`Job ${jobId} completed (status=${lastStatus})`);
-          return data;
-        }
-        this.logger.debug(
-          `Job ${jobId} ${lastStatus} but report not ready yet`,
-        );
-      } else if (lastStatus && isTerminalFailure(lastStatus)) {
-        throw new BadGatewayException(
-          `Open Finance job ended with status=${lastStatus}`,
-        );
-      }
-      await sleep(POLL_INTERVAL_MS);
+      if (Array.isArray(data?.items)) items.push(...data.items);
+      if (!data?.nextPage) return items;
+      nextPage = data.nextPage;
     }
 
-    throw new RequestTimeoutException(
-      `Open Finance job ${jobId} did not complete within ${POLL_TIMEOUT_MS / 1000}s (last status=${lastStatus ?? 'unknown'})`,
+    this.logger.warn(
+      `${context} hit the ${DATA_MAX_PAGES}-page cap — results may be truncated`,
     );
+    return items;
   }
 
   // -------------------- Error mapping --------------------

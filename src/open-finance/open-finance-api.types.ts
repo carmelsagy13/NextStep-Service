@@ -17,6 +17,8 @@ export interface OFConnection {
   _id?: string;
   connectionId?: string;
   status?: string;
+  customerId?: string;
+  psuId?: string;
   [k: string]: unknown;
 }
 
@@ -24,39 +26,6 @@ export interface OFConnection {
 export interface OFConnectionsResponse {
   connections?: OFConnection[];
   data?: OFConnection[];
-  [k: string]: unknown;
-}
-
-/** Response from POST /v2/connections. */
-export interface OFCreateConnectionResponse {
-  id?: string;
-  _id?: string;
-  connectionId?: string;
-  [k: string]: unknown;
-}
-
-/**
- * Response from POST /v2/connect/open-banking-init. The `state` needed to
- * finalize is embedded as a query param inside `scaOAuth`.
- */
-export interface OFInitConnectionResponse {
-  scaOAuth?: string;
-  connection?: { scaOAuth?: string; [k: string]: unknown };
-  [k: string]: unknown;
-}
-
-/** Response from POST /v2/financial-report/{customerId}. */
-export interface OFCreateReportResponse {
-  jobId?: string;
-  job_id?: string;
-  id?: string;
-  [k: string]: unknown;
-}
-
-/** Response from GET /v2/financial-report/{jobId}. */
-export interface OFFinancialReportResponse {
-  status?: string;
-  financialReport?: Record<string, unknown>;
   [k: string]: unknown;
 }
 

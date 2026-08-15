@@ -150,6 +150,21 @@ export interface OFLoansTotal {
 }
 
 /**
+ * Money moved between the user's own accounts over the reported flow window,
+ * measured from the checking side. Only the raw-data pipeline supplies this;
+ * the legacy aggregated report did not, so the extractor falls back to summing
+ * destination-account movements when it is absent.
+ */
+export interface OFCapitalFlows {
+  /** Outflows from checking into savings/investments. */
+  contributions?: number;
+  /** Inflows to checking coming back out of savings/investments. */
+  redemptions?: number;
+  /** Number of complete months the two figures span. */
+  windowMonths?: number;
+}
+
+/**
  * The aggregated financial report. Both the credit/BDI counters and the
  * collection sections are optional — the provider omits empty ones.
  */
@@ -172,6 +187,8 @@ export interface OFFinancialReport {
   savingsAndSecurities?: OFSavingsAndSecurities;
   savings?: OFSaving[];
   securities?: OFSecurity[];
+
+  capitalFlows?: OFCapitalFlows;
 
   loansTotal?: OFLoansTotal;
   loans?: OFLoan[];

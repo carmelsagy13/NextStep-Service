@@ -12,13 +12,14 @@ import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UserProfileHistory } from '../database/entities/user-profile-history.entity.js';
 import { UserAspiration } from '../database/entities/user-aspiration.entity.js';
+import { User } from '../database/entities/user.entity.js';
 import { FinancialAnalysisModule } from '../financial-analysis/financial-analysis.module.js';
 import { EventDetectionModule } from '../event-detection/event-detection.module.js';
 import { QuestionnaireModule } from '../questionnaire/questionnaire.module.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BankConsent, BankToken, RoadmapStep, RoadmapGoal, UserProfile, UserProfileHistory, UserAspiration]),
+    TypeOrmModule.forFeature([BankConsent, BankToken, RoadmapStep, RoadmapGoal, UserProfile, UserProfileHistory, UserAspiration, User]),
     // Store uploaded files in memory so we can access file.buffer in the service.
     MulterModule.register({ storage: memoryStorage() }),
     FinancialAnalysisModule,

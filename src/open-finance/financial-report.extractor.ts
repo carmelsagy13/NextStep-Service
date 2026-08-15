@@ -290,12 +290,19 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
   const securitiesAdditionTotal = Array.isArray(report.securities)
     ? report.securities.reduce((acc, s) => acc + num(s?.securitiesAddition), 0)
     : 0;
-  // Monthly deposits = (positive savings movements + securities additions) / 3.
-  const monthlyDeposits = round(
-    (positiveSavingsFlow + securitiesAdditionTotal) / 3,
-  );
-  // Monthly withdrawals = magnitude of negative savings movements / 3.
-  const monthlyWithdrawals = round(negativeSavingsFlow / 3);
+
+  // The raw-data pipeline measures capital movements from the checking side,
+  // which excludes fund-internal churn (switches, accruals, reinvestments).
+  // Legacy report payloads carry no capitalFlows, so they keep summing the
+  // destination-account movements.
+  const flows = report.capitalFlows;
+  const flowMonths = num(flows?.windowMonths) || 3;
+  const monthlyDeposits = flows
+    ? round(num(flows.contributions) / flowMonths)
+    : round((positiveSavingsFlow + securitiesAdditionTotal) / 3);
+  const monthlyWithdrawals = flows
+    ? round(num(flows.redemptions) / flowMonths)
+    : round(negativeSavingsFlow / 3);
 
   // Mean balance over the last 3 monthly entries; closing-balance field when the
   // provider supplies one, otherwise the single currentBalance snapshot.

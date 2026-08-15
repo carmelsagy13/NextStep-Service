@@ -27,6 +27,7 @@ import {
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import { extractFeatures } from './financial-report.extractor.js';
 import { FinancialFeatures } from './financial-features.model.js';
+import { auditFeatures } from '../diagnostics/open-finance-audit.js';
 import { computeLossAversion } from '../loss-aversion/loss-aversion.engine.js';
 import type { LossAversionResult } from '../loss-aversion/loss-aversion.types.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
@@ -232,6 +233,12 @@ export class OpenFinanceService {
         JSON.stringify(features, null, 2),
     );
 
+    auditFeatures(
+      this.logger,
+      userId,
+      features as unknown as Record<string, unknown>,
+    );
+
     // 2a. Persist the raw snapshot and detect data-backed events. These run in
     //     parallel with the LLM round-trips below; they don't block them.
     const sideEffects = Promise.all([
@@ -370,12 +377,13 @@ export class OpenFinanceService {
       '',
       '## How to read the financial features block (all amounts in ILS, monthly unless noted)',
       '- currentBalance: total liquid balance across all checking accounts.',
-      '- monthlyIncome / monthlyExpenses: provider-aggregated average monthly income and spending.',
+      "- monthlyIncome / monthlyExpenses: average monthly income and spending. monthlyExpenses EXCLUDES loan/mortgage repayments and transfers into the user's own savings/investment accounts — those are reported separately and must NOT be treated as overspending.",
       '- monthlyNetCashFlow: provider-reported income minus expenses per month.',
-      '- discretionarySurplus = monthlyIncome - monthlyExpenses. POSITIVE means the user lives within their means and can build wealth.',
+      '- discretionarySurplus = monthlyIncome - monthlyExpenses, i.e. disposable income BEFORE debt service. POSITIVE means the user lives within their means and can build wealth.',
       '- savingsRate: % of monthly income left as surplus. Higher = more capacity to save/invest.',
       '- monthsCovered / avgMonthlyIncome / avgMonthlyExpense / deficitMonthsCount: the multi-month trend. deficitMonthsCount = number of months where expense exceeded income.',
       '- totalSavings / totalSecuritiesValue / totalInvestments / securitiesCount: accumulated wealth. A LARGE totalInvestments is a STRENGTH, never a deficit, and points to the higher stages.',
+      '- IMPORTANT: totalSavings counts DEPOSIT accounts only. Money-market funds and other securities are liquid and appear in totalSecuritiesValue. totalSavings = 0 therefore does NOT mean the user has no emergency fund — judge the safety net on totalInvestments / savingsAndSecuritiesBalance, and never propose building one when those are already substantial.',
       '- totalLoans / totalMortgage / totalDebt / hasActiveLoans / hasMortgage: outstanding debt.',
       '- activeCreditCardsCount / avgMonthlyCreditCardSpend / creditCardFeesTotal: credit-card usage.',
       '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount, akamCount, cancelledCount): BDI distress counters. Any non-zero value signals instability — score system_indicators lower.',
@@ -663,7 +671,8 @@ export class OpenFinanceService {
       '   return an ID-based reconciliation diff.',
       '',
       '## How to read the financial features block (all amounts in ILS, monthly unless noted)',
-      '- discretionarySurplus = monthlyIncome - monthlyExpenses. POSITIVE = healthy cash flow; a comfortable surplus is a STRENGTH.',
+      '- discretionarySurplus = monthlyIncome - monthlyExpenses, disposable income BEFORE debt service. POSITIVE = healthy cash flow; a comfortable surplus is a STRENGTH.',
+      '- Money moved into savings or investment accounts is NOT an expense and NOT a deficit. Never infer an overdraft from it; only a negative currentBalance or a non-zero systemFlags counter indicates real distress.',
       '- A large totalInvestments / totalSecuritiesValue is wealth-building and a STRENGTH — never describe it as a deficit. Such users point toward the HIGHER stages (4–5).',
       '- deficitMonthsCount across monthsCovered shows cash-flow stability; more deficit months ⇒ weaker cash flow.',
       '- monthlyLoanPayments vs monthlyMortgagePayments are SEPARATE debt-service streams (consumer loans are not mortgages); loanVSaffordability / mortgageVSaffordability express each as a share of disposable surplus (higher = heavier; 99 = unaffordable, no positive surplus). loanBalance / mortgageBalance are the outstanding balances.',
