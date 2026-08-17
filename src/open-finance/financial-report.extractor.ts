@@ -123,6 +123,9 @@ export function emptyFeatures(): FinancialFeatures {
     activeCreditCardsCount: 0,
     avgMonthlyCreditCardSpend: 0,
     creditCardFeesTotal: 0,
+    overdraftLimit: 0,
+    overdraftUsed: 0,
+    overdraftUtilisation: 0,
     savingsRate: 0,
     discretionarySurplus: 0,
     systemFlags: {
@@ -132,6 +135,7 @@ export function emptyFeatures(): FinancialFeatures {
       akamCount: 0,
       cancelledCount: 0,
     },
+    systemFlagsAvailable: false,
     hasData: false,
   };
 }
@@ -241,6 +245,24 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
       )
     : 0;
 
+  // ── Overdraft facility ─────────────────────────────────────────────────────
+  // Only the CHECKING account carries a trustworthy limit: the provider reports
+  // creditLimit=0 on the credit-line account itself and placeholder values on
+  // cards, so card utilisation is deliberately not derived here.
+  const checkingForLimits = report.checkingAccountsILS?.length
+    ? report.checkingAccountsILS
+    : (report.checkingAccounts ?? []);
+  const overdraftLimit = round(
+    checkingForLimits.reduce((acc, a) => acc + num(a?.creditLimit), 0),
+  );
+  const overdraftUsed = round(
+    checkingForLimits.reduce((acc, a) => acc + Math.max(0, -num(a?.amount)), 0),
+  );
+  const overdraftUtilisation =
+    overdraftLimit > 0
+      ? Math.round((overdraftUsed / overdraftLimit) * 100)
+      : 0;
+
   // ── Derived ratios ───────────────────────────────────────────────────────────
   // Savings rate based on what the user moves into savings/investments each
   // month is NOT directly available; we approximate "contribution capacity" with
@@ -320,8 +342,17 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
         )
       : currentBalance;
 
-  // ── System / BDI counters ──────────────────────────────────────────────────
-  const systemFlags = {
+  // ── System / BDI counters ────────────────────────────────────────────
+  // No endpoint currently supplies these. A null counter means "unknown", which
+  // must not collapse into "zero = clean record".
+  const rawCounters = [
+    report.countLoanOverDue,
+    report.countForeclosure,
+    report.countAlertNotice,
+    report.countAkam,
+    report.countCancelled,
+  ];
+  const systemFlagsAvailable = rawCounters.some((c) => c != null);  const systemFlags = {
     loanOverDueCount: num(report.countLoanOverDue),
     foreclosureCount: num(report.countForeclosure),
     alertNoticeCount: num(report.countAlertNotice),
@@ -361,9 +392,13 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
     activeCreditCardsCount,
     avgMonthlyCreditCardSpend,
     creditCardFeesTotal,
+    overdraftLimit,
+    overdraftUsed,
+    overdraftUtilisation,
     savingsRate,
     discretionarySurplus,
     systemFlags,
+    systemFlagsAvailable,
     hasData: true,
   };
 }

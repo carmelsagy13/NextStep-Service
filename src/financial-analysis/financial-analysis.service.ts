@@ -36,6 +36,20 @@ export class FinancialAnalysisService {
     userId: string,
     features: FinancialFeatures,
   ): Promise<FinancialSnapshot> {
+    const latest = await this.snapshotRepo.findOne({
+      where: { userId },
+      order: { createdAt: 'DESC' },
+    });
+
+    // Re-running the analysis on unchanged bank data must not append a
+    // duplicate row — the table is a change history, not a run log.
+    if (latest && this.isSameSnapshot(latest, features)) {
+      this.logger.log(
+        `Snapshot unchanged — userId=${userId}, reusing ${latest.snapshotId}`,
+      );
+      return latest;
+    }
+
     const snapshot = this.snapshotRepo.create({
       userId,
       monthlyIncome: features.monthlyIncome,
@@ -50,5 +64,20 @@ export class FinancialAnalysisService {
         `debt=${features.totalDebt}`,
     );
     return saved;
+  }
+
+  /** Decimal columns come back as strings, so compare numerically. */
+  private isSameSnapshot(
+    snapshot: FinancialSnapshot,
+    features: FinancialFeatures,
+  ): boolean {
+    const same = (stored: unknown, incoming: number): boolean =>
+      Number(stored ?? 0) === Number(incoming ?? 0);
+    return (
+      same(snapshot.monthlyIncome, features.monthlyIncome) &&
+      same(snapshot.monthlyExpenses, features.monthlyExpenses) &&
+      same(snapshot.totalSavings, features.totalInvestments) &&
+      same(snapshot.totalDebt, features.totalDebt)
+    );
   }
 }

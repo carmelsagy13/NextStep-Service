@@ -13,7 +13,6 @@ import type {
   OFBalance,
   OFBalanceHistory,
   OFDataAccount,
-  OFMonthlyReport,
   OFSlimTransaction,
 } from './open-finance-data.types.js';
 import { FLOW_WINDOW_MONTHS } from './open-finance-api.constants.js';
@@ -23,7 +22,7 @@ import { FLOW_WINDOW_MONTHS } from './open-finance-api.constants.js';
  * `POST /v2/financial-report/{customerId}` + `GET /v2/financial-report/{jobId}`
  * job used to return, using only the raw data endpoints that are still
  * permitted (`/v2/data/accounts`, `/v2/data/transactions`,
- * `/v2/data/accounts/{id}/balances/history`, `/v2/data/monthly-report/{userId}`).
+ * `/v2/data/accounts/{id}/balances/history`).
  *
  * Keeping the same output shape means the downstream extractor, prompts,
  * persistence and event detection are untouched by the migration.
@@ -58,7 +57,6 @@ export interface BuildReportInput {
   customerId: string;
   accounts: OFDataAccount[];
   transactions: OFSlimTransaction[];
-  monthlyReport?: OFMonthlyReport | null;
   /** Daily balance series per checking account, when available. */
   balanceHistories?: OFBalanceHistory[];
   /** Injectable clock, so "the current month is partial" is testable. */
@@ -160,7 +158,7 @@ function shiftMonth(key: string, months: number): string {
 }
 
 function isUsable(tx: OFSlimTransaction): boolean {
-  if (tx?.isDuplicate === true) return false;
+  // Duplicates are already excluded server-side via includeDuplicates=0.
   const status = String(tx?.status ?? '').toUpperCase();
   return !EXCLUDED_TX_STATUSES.has(status);
 }
@@ -202,7 +200,6 @@ export function buildFinancialReport(
     customerId,
     accounts = [],
     transactions = [],
-    monthlyReport,
     balanceHistories = [],
     now = new Date(),
   } = input;
@@ -245,6 +242,7 @@ export function buildFinancialReport(
     accountNumber: a?.accountNumber,
     accountId: a?.id,
     currency: currencyOf(a),
+    creditLimit: round(num(a?.creditLimit?.amount)),
   });
   const checkingAccounts = checkingAcc.map(toCheckingEntry);
   const checkingAccountsILS = checkingAccounts.filter(
@@ -318,13 +316,8 @@ export function buildFinancialReport(
     }));
 
   // ── Monthly averages ─────────────────────────────────────────────────────
-  const reportBalances = monthlyReport?.openBankingReportBalances;
-  const avgIncome = yearMonthBalance.length
-    ? averageOf(yearMonthBalance.map((m) => num(m.sumIncome)))
-    : num(reportBalances?.incomes?.total);
-  const avgExpense = yearMonthBalance.length
-    ? averageOf(yearMonthBalance.map((m) => num(m.sumExpense)))
-    : num(reportBalances?.expenses?.total);
+  const avgIncome = averageOf(yearMonthBalance.map((m) => num(m.sumIncome)));
+  const avgExpense = averageOf(yearMonthBalance.map((m) => num(m.sumExpense)));
 
   // Recurring income streams: income categories seen in at least two months.
   const incomeByCategory = new Map<string, Map<string, number>>();
@@ -441,10 +434,7 @@ export function buildFinancialReport(
     };
   });
   const totalSavings = round(
-    savings.reduce((acc, s) => acc + num(s.amount), 0) ||
-      num(
-        monthlyReport?.MonthlyReportGeneralDetails?.savings?.totalSavingsAmount,
-      ),
+    savings.reduce((acc, s) => acc + num(s.amount), 0),
   );
 
   // ── Securities ───────────────────────────────────────────────────────────
@@ -528,30 +518,18 @@ export function buildFinancialReport(
         .reduce((acc, a) => acc + Math.abs(pickBalance(a?.balances)), 0),
     );
   const totalMortgageAmount = sumLoanBalances(true);
-  const totalLoansAmount =
-    sumLoanBalances(false) ||
-    round(
-      num(monthlyReport?.MonthlyReportGeneralDetails?.loans?.totalLoansAmount),
-    );
+  const totalLoansAmount = sumLoanBalances(false);
 
   // ── Behavioural counters ─────────────────────────────────────────────────
-  // Only the monthly report still exposes these; they are the direct
-  // replacements for the deprecated report's count* fields.
-  const counters = reportBalances
-    ? {
-        countAkam: num(reportBalances.nsf),
-        countAlertNotice: num(reportBalances.limitationAlert),
-        countCancelled: num(reportBalances.canceledChecks),
-        countForeclosure: num(reportBalances.accountForeclosure),
-        countLoanOverDue: num(reportBalances.fallingBehindWarnings),
-      }
-    : {
-        countAkam: null,
-        countAlertNotice: null,
-        countCancelled: null,
-        countForeclosure: null,
-        countLoanOverDue: null,
-      };
+  // No endpoint currently exposes the BDI counters, so they stay unknown
+  // (null) rather than 0 — see FinancialFeatures.systemFlagsAvailable.
+  const counters = {
+    countAkam: null,
+    countAlertNotice: null,
+    countCancelled: null,
+    countForeclosure: null,
+    countLoanOverDue: null,
+  };
 
   const primaryAccount = checkingAcc[0] ?? accounts[0];
 

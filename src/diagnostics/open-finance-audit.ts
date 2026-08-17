@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import {
   FEATURE_USAGE,
+  MEANINGFUL_WHEN_FALSY,
   OF_ENDPOINT_PURPOSE,
   OF_EXPECTED_FIELDS,
 } from './data-usage.map.js';
@@ -140,6 +141,12 @@ export function auditAccountBalances(
     const extras = [
       a.loanType ? `loanType=${JSON.stringify(a.loanType)}` : '',
       a.product ? `product=${String(a.product).slice(0, 40)}` : '',
+      a.creditLimit
+        ? `creditLimit=${JSON.stringify(a.creditLimit)}`
+        : 'creditLimit=(absent)',
+      a.creditLimitInterestRate
+        ? `creditLimitInterestRate=${JSON.stringify(a.creditLimitInterestRate)}`
+        : '',
       Array.isArray(a.securityPositions)
         ? `securityPositions=${a.securityPositions.length}`
         : '',
@@ -201,6 +208,7 @@ export function auditFeatures(
   ];
 
   const zeroed: string[] = [];
+  const meaningfulFalsy: string[] = [];
   const dead: string[] = [];
   const unmapped: string[] = [];
 
@@ -210,7 +218,10 @@ export function auditFeatures(
     if (usage.startsWith('DEAD')) dead.push(key);
 
     const rendered = renderValue(value);
-    if (isEmptyValue(value)) zeroed.push(key);
+    if (isEmptyValue(value)) {
+      if (MEANINGFUL_WHEN_FALSY.has(key)) meaningfulFalsy.push(key);
+      else zeroed.push(key);
+    }
 
     lines.push(key.padEnd(30) + rendered.padEnd(22) + usage);
   }
@@ -221,7 +232,12 @@ export function auditFeatures(
 
   lines.push('');
   lines.push(`zero/empty values : ${zeroed.join(', ') || 'none'}`);
-  lines.push(`   → each of these contributes nothing to the LLM prompt or DB`);
+  lines.push(
+    '   → check each is genuinely zero for this user and not a broken mapping',
+  );
+  lines.push(
+    `falsy but meaningful: ${meaningfulFalsy.join(', ') || 'none'} (0/false is a real reading here)`,
+  );
   lines.push(`dead fields       : ${dead.join(', ') || 'none'} (safe to delete from the extractor)`);
   if (unmapped.length) {
     lines.push(`unknown fields    : ${unmapped.join(', ')} (added to the model but not in the usage map)`);

@@ -383,10 +383,13 @@ export class OpenFinanceService {
       '- savingsRate: % of monthly income left as surplus. Higher = more capacity to save/invest.',
       '- monthsCovered / avgMonthlyIncome / avgMonthlyExpense / deficitMonthsCount: the multi-month trend. deficitMonthsCount = number of months where expense exceeded income.',
       '- totalSavings / totalSecuritiesValue / totalInvestments / securitiesCount: accumulated wealth. A LARGE totalInvestments is a STRENGTH, never a deficit, and points to the higher stages.',
-      '- IMPORTANT: totalSavings counts DEPOSIT accounts only. Money-market funds and other securities are liquid and appear in totalSecuritiesValue. totalSavings = 0 therefore does NOT mean the user has no emergency fund — judge the safety net on totalInvestments / savingsAndSecuritiesBalance, and never propose building one when those are already substantial.',
+      '- IMPORTANT: totalSavings counts BANK DEPOSIT accounts only. Money-market funds and other securities are liquid savings too and appear in totalSecuritiesValue. For every savings, emergency-fund or safety-net judgement treat SAVINGS = savingsAndSecuritiesBalance (deposits + securities + investments), never totalSavings alone. totalSavings = 0 therefore does NOT mean the user has no savings, and you must never propose building an emergency fund when savingsAndSecuritiesBalance is already substantial.',
+      "- The bank data cannot see money held outside this bank. The onboarding questionnaire asks where the user's long-term savings are managed (q_long_term_savings_location: study fund / provident fund / pension fund / none) and the estimated liquid amount there (q_liquid_savings_estimated_amount). Those self-reported holdings are ALSO savings: add them to the picture when scoring savings_investments and pension_long_term, and say so in your reasoning. Do not double-count anything already visible in the features block.",
       '- totalLoans / totalMortgage / totalDebt / hasActiveLoans / hasMortgage: outstanding debt.',
       '- activeCreditCardsCount / avgMonthlyCreditCardSpend / creditCardFeesTotal: credit-card usage.',
+      '- overdraftLimit / overdraftUsed / overdraftUtilisation: the approved overdraft facility on the checking account, how much of it is actually drawn, and that as a %. overdraftUsed > 0 means the user is living in overdraft — a strong negative signal for cash_flow and credit_consumption. overdraftUsed = 0 while a limit exists is healthy. Card-level limits are NOT reported reliably by the bank, so never infer card utilisation.',
       '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount, akamCount, cancelledCount): BDI distress counters. Any non-zero value signals instability — score system_indicators lower.',
+      '- systemFlagsAvailable: when FALSE the behavioural counters were NOT supplied by the bank, and every systemFlags zero is a PLACEHOLDER, not evidence of a clean record. In that case you MUST NOT treat system_indicators as good: score it as the neutral/unknown middle of the scale, and say explicitly in your reasoning that the BDI counters were unavailable. Only when systemFlagsAvailable is TRUE may all-zero counters be read as a clean record.',
       'Judge cash_flow on discretionarySurplus and the deficitMonthsCount trend. Reward high totalInvestments / savingsRate when scoring savings_investments and pension_long_term. Score loans/mortgage from totalDebt, and system_indicators worse when systemFlags are non-zero.',
       '',
       '## Macro debt-service & savings-flow metrics (consumer loans and mortgages are SEPARATE)',
@@ -664,6 +667,7 @@ export class OpenFinanceService {
     const systemPrompt = [
       'You are an expert Israeli financial analyst running a STATEFUL reassessment.',
       'All textual output (state_description, ai_insight, summary) MUST be in Hebrew.',
+      'state_description MUST be written in the SECOND PERSON, addressed directly to the user ("אתה נמצא...", "ההכנסות שלך...") — never in the third person about them ("המשתמש נמצא...") and never referring to them by name or role.',
       '',
       'Do TWO things in ONE pass and return them together as a single JSON object:',
       '1) DETERMINE which of the 5 financial stages the user is in from the new summary.',
@@ -677,7 +681,9 @@ export class OpenFinanceService {
       '- deficitMonthsCount across monthsCovered shows cash-flow stability; more deficit months ⇒ weaker cash flow.',
       '- monthlyLoanPayments vs monthlyMortgagePayments are SEPARATE debt-service streams (consumer loans are not mortgages); loanVSaffordability / mortgageVSaffordability express each as a share of disposable surplus (higher = heavier; 99 = unaffordable, no positive surplus). loanBalance / mortgageBalance are the outstanding balances.',
       '- savingsAndSecuritiesBalance + net monthlyDeposits/monthlyWithdrawals show accumulated wealth and active saving; avgBalanceLast3Month is the recent average balance.',
-      '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount) non-zero ⇒ instability/distress.',
+      '- SAVINGS means savingsAndSecuritiesBalance (bank deposits + securities/investments), plus any off-platform holdings the user self-reported in the questionnaire (study fund, provident fund, pension, estimated liquid amount). totalSavings alone is bank deposits only — never treat totalSavings = 0 as "no savings" and never propose an emergency-fund task when the combined figure is already substantial.',
+      '- overdraftUsed > 0 means the user is drawing on their overdraft facility — real distress. overdraftUsed = 0 alongside an overdraftLimit is healthy.',
+      '- systemFlags (loanOverDueCount, foreclosureCount, alertNoticeCount) non-zero ⇒ instability/distress. If systemFlagsAvailable is FALSE the counters are simply unknown — do not read the zeros as proof of stability, and do not claim the user has a clean credit record.',
       '',
       '## Financial Stage Definitions',
       stagesSection,
@@ -749,7 +755,8 @@ export class OpenFinanceService {
         roadmap_state: {
           current_step: '<integer 1–5>',
           progress_percentage: '<integer 0–100>',
-          state_description: '<Hebrew string describing current state>',
+          state_description:
+            '<Hebrew string, second person, addressed to the user, describing their current state>',
           step_reasoning:
             '<explanation of WHY this stage was chosen: which financial features and stage-definition conditions drove the decision>',
         },

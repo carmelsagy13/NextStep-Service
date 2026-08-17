@@ -16,6 +16,8 @@ export interface OFCheckingAccount {
   accountNumber?: string;
   accountId?: string;
   currency?: string;
+  /** Approved overdraft facility on the account (`creditLimit.amount`). */
+  creditLimit?: number;
 }
 
 /** A single month's income/expense roll-up (`yearMonthBalance[]`). */

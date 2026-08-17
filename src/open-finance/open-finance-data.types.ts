@@ -5,7 +5,6 @@
  *  - GET /v2/data/accounts                    (balances, loans, savings, securities)
  *  - GET /v2/data/transactions                (categorised transaction stream)
  *  - GET /v2/data/accounts/{id}/balances/history (end-of-day balance series)
- *  - GET /v2/data/monthly-report/{userId}     (BDI-style behavioural counters)
  *
  * Everything is optional: the provider omits sections it has no data for, and
  * several fields differ between the published OpenAPI schema and what the
@@ -128,13 +127,10 @@ export interface OFDataTransaction {
   category?: { main?: string; sub?: string };
   changedCategory?: { main?: string; sub?: string };
   classification?: { type?: string; source?: string };
-  installments?: { number?: number; total?: number };
   type?: string;
   date?: { valueDate?: string; bookingDate?: string; transactionDate?: string };
-  merchantName?: string;
   /** End-of-day account balance after this transaction (checking accounts). */
   balancePerEndDay?: number | string;
-  isDuplicate?: boolean;
   [k: string]: unknown;
 }
 
@@ -150,7 +146,6 @@ export type OFSlimTransaction = Pick<
   | 'accountNumber'
   | 'providerId'
   | 'status'
-  | 'isDuplicate'
   | 'amount'
   | 'date'
   | 'category'
@@ -172,54 +167,4 @@ export interface OFBalanceHistory {
   toDate?: string;
   count?: number;
   items?: Array<{ date?: string; balance?: number | string }>;
-}
-
-/**
- * Response from GET /v2/data/monthly-report/{userId}. This is the only source
- * of the behavioural counters (NSF, foreclosures, restriction notices…) that
- * the deprecated financial report exposed as `countAkam`, `countForeclosure`…
- */
-export interface OFMonthlyReport {
-  openBankingReportId?: string;
-  openBankingReportBalances?: {
-    incomes?: {
-      total?: number;
-      incomeFromSalary?: number;
-      incomeFromChecks?: number;
-      regularIncomesSum?: number;
-    };
-    expenses?: {
-      total?: number;
-      expensesFromMortgage?: number;
-      expensesFromChecks?: number;
-      regularExpensesSum?: number;
-    };
-    canceledChecks?: number;
-    standingOrdersReturns?: number;
-    irregularWarnings?: number;
-    accountForeclosure?: number;
-    nsf?: number;
-    transfersForFallingBehind?: number;
-    limitationAlert?: number;
-    fallingBehindWarnings?: number;
-  };
-  MonthlyReportGeneralDetails?: {
-    loans?: {
-      totalLoansAmount?: number;
-      bankLoans?: Record<string, { amount?: number }>;
-      creditCardLoans?: Record<string, { amount?: number }>;
-    };
-    savings?: {
-      totalSavingsAmount?: number;
-      savingsDetails?: Record<
-        string,
-        Array<{ amount?: number; description?: string }>
-      >;
-    };
-    accounts?: {
-      checking?: OFDataAccount[];
-      savings?: OFDataAccount[];
-      loans?: OFDataAccount[];
-    };
-  };
 }

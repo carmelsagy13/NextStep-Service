@@ -198,7 +198,8 @@ export const COLUMN_NOTES: Record<string, string> = {
 
 /**
  * Every FinancialFeatures field → who consumes it.
- * "DEAD" marks fields that are computed but read by nobody.
+ * Note: the whole object is JSON-serialised into the LLM prompts, so a field is
+ * only truly unused when no prompt documents it either.
  */
 export const FEATURE_USAGE: Record<string, string> = {
   currentBalance: 'LLM profile + state prompts',
@@ -227,16 +228,38 @@ export const FEATURE_USAGE: Record<string, string> = {
   mortgageVSaffordability: 'LLM profile prompt',
   savingsAndSecuritiesBalance: 'LLM state prompt',
   monthlyDeposits: 'loss-aversion (IdleSurplusStrategy), LLM profile',
-  monthlyWithdrawals: 'DEAD — computed, never read',
-  avgBalanceLast3Month: 'DEAD — computed, never read',
+  monthlyWithdrawals: 'LLM profile prompt (documented in the features legend)',
+  avgBalanceLast3Month: 'LLM profile prompt (documented in the features legend)',
   activeCreditCardsCount: 'LLM profile + state prompts',
   avgMonthlyCreditCardSpend: 'LLM profile prompt',
   creditCardFeesTotal: 'LLM profile prompt',
+  overdraftLimit: 'LLM profile prompt (credit_consumption / cash_flow)',
+  overdraftUsed: 'LLM profile prompt (credit_consumption / cash_flow)',
+  overdraftUtilisation: 'LLM profile prompt (credit_consumption / cash_flow)',
   savingsRate: 'LLM profile prompt',
   discretionarySurplus: 'LLM profile + state, loss-aversion',
   systemFlags: 'LLM profile prompt (BDI counters)',
+  systemFlagsAvailable:
+    'LLM profile + state prompts — guards against reading absent counters as a clean record',
   hasData: 'loss-aversion gate',
 };
+
+/**
+ * Fields where a falsy value is a real reading, not a missing mapping.
+ * `overdraftUsed: 0` means "facility untouched"; `systemFlagsAvailable: false`
+ * means "counters unknown" — neither indicates broken extraction.
+ */
+export const MEANINGFUL_WHEN_FALSY = new Set([
+  'systemFlagsAvailable',
+  'hasData',
+  'hasActiveLoans',
+  'hasMortgage',
+  'overdraftUsed',
+  'overdraftUtilisation',
+  'deficitMonthsCount',
+  'loanVSaffordability',
+  'mortgageVSaffordability',
+]);
 
 /**
  * Top-level fields our types expect from each Open Finance endpoint. Used to
@@ -285,12 +308,9 @@ export const OF_EXPECTED_FIELDS: Record<string, string[]> = {
     'category',
     'changedCategory',
     'classification',
-    'installments',
     'type',
     'date',
-    'merchantName',
     'balancePerEndDay',
-    'isDuplicate',
   ],
   '/v2/data/balances/history': [
     'accountId',
@@ -299,11 +319,6 @@ export const OF_EXPECTED_FIELDS: Record<string, string[]> = {
     'toDate',
     'count',
     'items',
-  ],
-  '/v2/data/monthly-report': [
-    'openBankingReportId',
-    'openBankingReportBalances',
-    'MonthlyReportGeneralDetails',
   ],
 };
 
@@ -314,7 +329,5 @@ export const OF_ENDPOINT_PURPOSE: Record<string, string> = {
   '/v2/data/transactions':
     'yearMonthBalance (income/expense per month), loan+mortgage repayments, card spend, savings deposits/withdrawals',
   '/v2/data/balances/history':
-    'month-end balances -> avgBalanceLast3Month (DEAD) and yearMonthBalance.balance',
-  '/v2/data/monthly-report':
-    'systemFlags (akam/foreclosure/alertNotice/loanOverDue/cancelled) only',
+    'month-end balances -> yearMonthBalance.balance and avgBalanceLast3Month',
 };
