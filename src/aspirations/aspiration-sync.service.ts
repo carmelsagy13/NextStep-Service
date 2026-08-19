@@ -9,7 +9,7 @@ import {
   UserGoal,
   UserGoalStatus,
 } from '../database/entities/user-goal.entity.js';
-import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
+import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import {
   criteriaScoresFromProfile,
@@ -122,13 +122,16 @@ export class AspirationSyncService {
     );
 
     // Templates the user has actually unlocked, so the LLM can only ADD a task
-    // the user is eligible for.
+    // the user is eligible for. Sponsored goals are excluded outright: they
+    // promote a partner product, never a user-declared aspiration.
     let eligibleTemplates: RoadmapGoal[] = [];
     if (profile?.currentStep != null) {
       const currentStep = profile.currentStep;
       const criteriaScores = criteriaScoresFromProfile(profile);
-      eligibleTemplates = allTemplates.filter((t) =>
-        isRoadmapGoalEligible(t, { currentStep, criteriaScores }),
+      eligibleTemplates = allTemplates.filter(
+        (t) =>
+          t.type !== RoadmapGoalType.MARKETING &&
+          isRoadmapGoalEligible(t, { currentStep, criteriaScores }),
       );
     }
 

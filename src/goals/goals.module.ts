@@ -6,11 +6,23 @@ import { StepIsolationGuard } from './guards/step-isolation.guard.js';
 import { UserGoal } from '../database/entities/user-goal.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
+import { Partner } from '../database/entities/partner.entity.js';
+import { PartnerOffer } from '../database/entities/partner-offer.entity.js';
 import { LlmOrchestratorModule } from '../llm-orchestrator/llm-orchestrator.module.js';
 import { QuestionnaireModule } from '../questionnaire/questionnaire.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UserGoal, RoadmapGoal, UserProfile]), LlmOrchestratorModule, QuestionnaireModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      UserGoal,
+      RoadmapGoal,
+      UserProfile,
+      Partner,
+      PartnerOffer,
+    ]),
+    LlmOrchestratorModule,
+    QuestionnaireModule,
+  ],
   controllers: [GoalsController],
   providers: [GoalsService, StepIsolationGuard],
   exports: [GoalsService],

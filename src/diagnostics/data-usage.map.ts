@@ -66,6 +66,20 @@ export const TABLE_USAGE: Record<string, TableUsage> = {
     readBy: 'goals.listGoals/createGoal, step-isolation.guard, open-finance.analyzeBankingJson, llm-orchestrator.personalizeGoals',
     verdict: 'SEED-ONLY',
   },
+  partners: {
+    entity: 'Partner',
+    purpose: 'Commercial partner branding for MARKETING goals (logo, accent colour)',
+    writtenBy: '— (seed/migration only)',
+    readBy: 'goals.getGoals, open-finance.analyzeBankingJson, llm-orchestrator.personalizeGoals (via roadmap_goals.offer)',
+    verdict: 'SEED-ONLY',
+  },
+  partner_offers: {
+    entity: 'PartnerOffer',
+    purpose: 'Sponsored campaigns: headline, benefit tags, affiliate CTA, disclaimer, targeting',
+    writtenBy: '— (seed/migration only)',
+    readBy: 'goals.getGoals, open-finance.applyReconciliation (marketing policy gate), goal-response.mapper',
+    verdict: 'SEED-ONLY',
+  },
   roadmap_steps: {
     entity: 'RoadmapStep',
     purpose: 'The 8 criteria definitions per step — core LLM prompt input',

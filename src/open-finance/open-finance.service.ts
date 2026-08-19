@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
@@ -12,7 +13,7 @@ import {
   RoadmapStep,
   CriteriaDetail,
 } from '../database/entities/roadmap-step.entity.js';
-import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
+import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
 import { RoadmapState } from '../database/entities/roadmap-state.entity.js';
 import {
   UserGoal,
@@ -32,6 +33,13 @@ import { computeLossAversion } from '../loss-aversion/loss-aversion.engine.js';
 import type { LossAversionResult } from '../loss-aversion/loss-aversion.types.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
 import { EventDetectionService } from '../event-detection/event-detection.service.js';
+import { isMarketingGoalAllowed, MAX_ACTIVE_MARKETING_GOALS } from '../common/marketing-goal-policy.js';
+import { GoalResponseDto } from '../goals/dto/goal-response.dto.js';
+import {
+  GOAL_RESPONSE_RELATIONS,
+  resolveAssetBaseUrl,
+  toGoalResponseList,
+} from '../goals/goal-response.mapper.js';
 import {
   QuestionnaireService,
   QuestionnaireSummary,
@@ -73,10 +81,12 @@ export interface GeminiAnalysisResult {
 
 export interface PersistAnalysisResult {
   roadmap_state: RoadmapState;
-  user_goals: UserGoal[];
+  user_goals: GoalResponseDto[];
   task_selection_reasoning: {
     why_not_added: string;
     relevant_but_premature: string[];
+    /** Why a sponsored goal was or was not offered in this pass. */
+    marketing_rationale?: string;
   };
 }
 
@@ -133,6 +143,7 @@ export interface ReconciliationDecision {
   task_selection_reasoning: {
     why_not_added: string;
     relevant_but_premature: string[];
+    marketing_rationale?: string;
   };
 }
 
@@ -158,6 +169,7 @@ export class OpenFinanceService {
     private readonly financialAnalysis: FinancialAnalysisService,
     private readonly eventDetection: EventDetectionService,
     private readonly questionnaire: QuestionnaireService,
+    private readonly config: ConfigService,
   ) {}
 
   async connect(body: any) {
@@ -211,6 +223,7 @@ export class OpenFinanceService {
       this.stepRepo.find({ order: { stepId: 'ASC' } }),
       this.roadmapGoalRepo.find({
         where: { isActive: true },
+        relations: ['offer', 'offer.partner'],
         order: { stepId: 'ASC', priority: 'ASC' },
       }),
     ]);
@@ -309,6 +322,7 @@ export class OpenFinanceService {
       decision,
       goalTemplates,
       context,
+      features,
       lossAversion,
     });
 
@@ -573,6 +587,20 @@ export class OpenFinanceService {
                   g.criteria ? `    criteria: "${g.criteria}"` : null,
                   `    title: "${g.title}"`,
                   `    description_template: "${g.descriptionTemplate}"`,
+                  // Sponsored goals expose branding + targeting so the model can
+                  // judge fit. The affiliate link is deliberately withheld.
+                  g.type === RoadmapGoalType.MARKETING && g.offer
+                    ? `    partner: "${g.offer.partner?.nameHe ?? ''}"`
+                    : null,
+                  g.type === RoadmapGoalType.MARKETING && g.offer
+                    ? `    offer_headline: "${g.offer.headlineHe}"`
+                    : null,
+                  g.type === RoadmapGoalType.MARKETING && g.offer?.benefitTags?.length
+                    ? `    benefit_tags: ${JSON.stringify(g.offer.benefitTags)}`
+                    : null,
+                  g.type === RoadmapGoalType.MARKETING && g.offer?.targeting
+                    ? `    offer_targeting: ${JSON.stringify(g.offer.targeting)}`
+                    : null,
                   g.requiredContext
                     ? `    required_context: "${g.requiredContext}"`
                     : null,
@@ -699,6 +727,29 @@ export class OpenFinanceService {
       '- Only "add" templates that are genuinely relevant and not already assigned.',
       '- When adding a goal, fill dynamic_params with REAL numbers taken from the financial features block (e.g. surplus, currentBalance, activeCreditCardsCount, totalInvestments). NEVER invent figures; if a value is not derivable from the features, use null.',
       '',
+      '## Sponsored Goals (type = "marketing") — STRICT RULES',
+      'Some templates promote a partner product and are marked `type: "marketing"`.',
+      'They are commercial content, so they are held to a much higher bar than any',
+      'other goal:',
+      '- Add AT MOST ONE marketing goal in total, and only if the user does not already have one.',
+      '- Add one ONLY when a concrete, numeric need in the financial features block matches the',
+      '  goal\'s `offer_targeting` (e.g. a sustained discretionarySurplus above minMonthlySurplus).',
+      '  If the numbers do not clearly support it, add NONE.',
+      '- NEVER add one when the user shows any sign of distress: negative monthlyNetCashFlow,',
+      '  any non-zero systemFlags, deficit months dominating monthsCovered, or current_step below 2.',
+      '  Debt, cash-flow and emergency-buffer goals ALWAYS take precedence.',
+      '- Give it a HIGHER priority number (= lower rank) than every personal goal you add, so it',
+      '  never sits at the top of the list.',
+      '- Write ai_insight in the same calm advisory Hebrew as any other goal: state the concrete',
+      '  benefit for THIS user based on their numbers. No hype, no urgency, no superlatives, no',
+      '  promises of returns.',
+      '- NEVER invent partner names, rates, fees, terms, benefits or links. Use ONLY the `partner`,',
+      '  `offer_headline` and `benefit_tags` values shown in the task bank.',
+      '- Explain your decision in `task_selection_reasoning.marketing_rationale` (Hebrew) — including',
+      '  when you deliberately added none.',
+      'These rules are re-enforced by the server after you answer: a marketing goal that',
+      'violates them is discarded regardless of what you return.',
+      '',
       '## Overarching Goal (Aspiration) Sync — IMPORTANT',
       "The user declares OVERARCHING goals (\"aspirations\") separately — e.g. a wedding",
       'budget or a car target. An existing task may be LINKED to one via aspiration_id.',
@@ -804,6 +855,8 @@ export class OpenFinanceService {
             '<Hebrew explanation: why were other available tasks from the task bank NOT added? Which goals were considered but rejected, and why?>',
           relevant_but_premature:
             '<array of roadmap_goal_id strings: goals that ARE relevant but the user is not ready for them yet>',
+          marketing_rationale:
+            '<Hebrew: which sponsored goal was added and what in the user\'s numbers justifies it — or why none was added>',
         },
       }),
       '',
@@ -913,6 +966,7 @@ export class OpenFinanceService {
     decision: ReconciliationDecision;
     goalTemplates: RoadmapGoal[];
     context: UserReconciliationContext;
+    features: FinancialFeatures;
     lossAversion: LossAversionResult;
   }): Promise<PersistAnalysisResult> {
     const { userId, currentStep, decision } = params;
@@ -1076,8 +1130,41 @@ export class OpenFinanceService {
 
       // Additions (dedup + reactivate to preserve identity, never duplicate)
       const aspirationByIdForAdd = aspirationByIdForUpdate;
+
+      // Sponsored content is re-gated here: the prompt states the rules, but the
+      // model is not trusted with them. Budget is consumed as offers are accepted.
+      let marketingBudget = Math.max(
+        0,
+        MAX_ACTIVE_MARKETING_GOALS -
+          existing.filter(
+            (t) =>
+              t.status === UserGoalStatus.ACTIVE &&
+              t.roadmapGoalId &&
+              templateMap.get(t.roadmapGoalId)?.type === RoadmapGoalType.MARKETING,
+          ).length,
+      );
+
       for (const a of decision.task_reconciliation.add) {
         if (!allowedAddIds.has(a.roadmap_goal_id)) continue; // hallucinated id guard
+
+        const addedTemplate = templateMap.get(a.roadmap_goal_id);
+        if (addedTemplate?.type === RoadmapGoalType.MARKETING) {
+          const allowed =
+            marketingBudget > 0 &&
+            isMarketingGoalAllowed(addedTemplate, {
+              currentStep,
+              features: params.features,
+              activeMarketingGoalCount: 0,
+            });
+          if (!allowed) {
+            this.logger.log(
+              `[Marketing] Rejected sponsored goal ${a.roadmap_goal_id} for userId=${userId} — policy gate`,
+            );
+            continue;
+          }
+          marketingBudget -= 1;
+        }
+
         // Only honor an aspiration link the user actually owns.
         const linkedAspiration =
           a.aspiration_id && aspirationByIdForAdd.has(a.aspiration_id)
@@ -1141,13 +1228,16 @@ export class OpenFinanceService {
       // Return the user's currently active tasks with their templates populated.
       const activeGoals = await manager.find(UserGoal, {
         where: { userId, status: UserGoalStatus.ACTIVE },
-        relations: ['roadmapGoal'],
+        relations: GOAL_RESPONSE_RELATIONS,
         order: { priority: 'ASC' },
       });
 
       return {
         roadmap_state: savedState,
-        user_goals: activeGoals,
+        user_goals: toGoalResponseList(
+          activeGoals,
+          resolveAssetBaseUrl(this.config.get<string>('PUBLIC_ASSET_BASE_URL')),
+        ),
         task_selection_reasoning: { why_not_added: '', relevant_but_premature: [] },
       };
     });

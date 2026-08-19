@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 import { AuthModule } from './auth/auth.module.js';
 import { UserProfileModule } from './user-profile/user-profile.module.js';
@@ -40,6 +41,13 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
     }),
 
     ScheduleModule.forRoot(),
+
+    // Partner logos/banners live in `public/` at the project root (not in dist),
+    // so they are resolved from the working directory rather than __dirname.
+    ServeStaticModule.forRoot({
+      rootPath: join(process.cwd(), 'public'),
+      serveRoot: '/static',
+    }),
 
     LlmClientModule,
     AuthModule,

@@ -1,10 +1,17 @@
 import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiOkResponse,
+} from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { GoalsService } from './goals.service.js';
 import { StepIsolationGuard } from './guards/step-isolation.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
+import { GoalResponseDto } from './dto/goal-response.dto.js';
 import { UserGoalStatus } from '../database/entities/user-goal.entity.js';
 
 @ApiTags('Goals')
@@ -27,6 +34,11 @@ export class GoalsController {
   @Get()
   @ApiOperation({ summary: 'Get user goals with progress, optionally filtered by lifecycle status' })
   @ApiQuery({ name: 'status', required: false, enum: UserGoalStatus })
+  @ApiOkResponse({
+    type: [GoalResponseDto],
+    description:
+      'MARKETING goals carry a populated `marketing` block; goals whose sponsored offer is no longer live are returned as `personal` with `marketing: null`.',
+  })
   getGoals(
     @CurrentUser() user: { userId: string },
     @Query('status') status?: UserGoalStatus,

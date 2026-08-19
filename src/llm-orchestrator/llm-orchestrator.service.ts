@@ -3,7 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmGuidanceLog } from '../database/entities/llm-guidance-log.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
-import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
+import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
+import { filterMarketingGoals } from '../common/marketing-goal-policy.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import {
   QuestionnaireSummary,
@@ -16,6 +17,7 @@ export interface PersonalizedGoalRecommendation {
   priority: number;
   ai_insight: string;
   dynamic_params: Record<string, any>;
+  goal_type: RoadmapGoalType;
 }
 
 @Injectable()
@@ -103,13 +105,34 @@ export class LlmOrchestratorService {
     filteredGoals: RoadmapGoal[],
     questionnaire: QuestionnaireSummary | null = null,
   ): Promise<PersonalizedGoalRecommendation[]> {
-    const goalList = filteredGoals.map((g) => ({
+    // Sponsored goals are gated BEFORE the model sees them, so an unsuitable
+    // offer can never be recommended no matter what the model decides.
+    const candidateGoals = filterMarketingGoals(
+      filteredGoals,
+      {
+        currentStep: profile.currentStep ?? null,
+        features: null,
+        systemIndicatorsScore: profile.systemIndicators ?? null,
+        activeMarketingGoalCount: 0,
+      },
+      (goal) => goal,
+    );
+
+    const goalList = candidateGoals.map((g) => ({
       roadmap_goal_id: g.goalId,
       title: g.title,
       priority: g.priority,
+      type: g.type,
       description_template: g.descriptionTemplate,
       required_context: g.requiredContext ?? null,
       dynamic_params_schema: g.dynamicParams ?? {},
+      ...(g.type === RoadmapGoalType.MARKETING && g.offer
+        ? {
+            partner: g.offer.partner?.nameHe ?? null,
+            offer_headline: g.offer.headlineHe,
+            benefit_tags: g.offer.benefitTags ?? [],
+          }
+        : {}),
     }));
 
     const prompt = [
@@ -146,6 +169,15 @@ export class LlmOrchestratorService {
       '2. Populate dynamic_params with any values derivable from the user profile.',
       '3. Return ALL goals ordered by relevance to this user (most relevant first).',
       '4. Preserve the exact roadmap_goal_id and title from the list.',
+      '',
+      '## Sponsored Goals (type = "marketing")',
+      'A goal marked `type: "marketing"` promotes a partner product. It has already',
+      'passed a suitability check, so it MAY be included — but treat it as the least',
+      'urgent item: it must NEVER be ranked above a goal that addresses debt, cash-flow',
+      'or an emergency buffer. Write its ai_insight in the same calm advisory tone as',
+      'the others, stating the concrete benefit for THIS user. No hype, no urgency, no',
+      'superlatives. NEVER invent partner names, rates, fees, terms or links — use only',
+      'the `partner`, `offer_headline` and `benefit_tags` fields shown above.',
       '',
       '## Response Format',
       'Respond EXCLUSIVELY with valid JSON — no markdown, no extra text:',
@@ -185,25 +217,26 @@ export class LlmOrchestratorService {
         : [];
 
     // Security hard-stop: strip any goal IDs the AI invented outside the filtered list
-    const allowedIds = new Set(filteredGoals.map((g) => g.goalId));
+    const allowedIds = new Set(candidateGoals.map((g) => g.goalId));
     const safe = recommendations.filter((r: any) =>
       allowedIds.has(r.roadmap_goal_id),
     );
 
     const dropped = recommendations.length - safe.length;
 
-    const result = safe.map((r: any) => ({
-      roadmap_goal_id: r.roadmap_goal_id,
-      title:
-        r.title ??
-        filteredGoals.find((g) => g.goalId === r.roadmap_goal_id)?.title ??
-        '',
-      priority: Number(r.priority) || 0,
-      ai_insight: r.ai_insight ?? '',
-      dynamic_params: r.dynamic_params ?? {},
-    }));
+    const result = safe.map((r: any) => {
+      const template = candidateGoals.find((g) => g.goalId === r.roadmap_goal_id);
+      return {
+        roadmap_goal_id: r.roadmap_goal_id,
+        title: r.title ?? template?.title ?? '',
+        priority: Number(r.priority) || 0,
+        ai_insight: r.ai_insight ?? '',
+        dynamic_params: r.dynamic_params ?? {},
+        goal_type: template?.type ?? RoadmapGoalType.PERSONAL,
+      };
+    });
 
-    await this.persistGuidanceLog(profile, filteredGoals, result, questionnaire);
+    await this.persistGuidanceLog(profile, candidateGoals, result, questionnaire);
 
     return result;
   }

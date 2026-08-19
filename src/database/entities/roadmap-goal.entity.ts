@@ -1,5 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { UserGoal } from './user-goal.entity.js';
+import { PartnerOffer } from './partner-offer.entity.js';
 
 export enum RoadmapGoalType {
   PERSONAL = 'personal',
@@ -66,6 +74,18 @@ export class RoadmapGoal {
 
   @Column({ type: 'text', name: 'required_context_text', nullable: true })
   requiredContextText: string;
+
+  /**
+   * The sponsored campaign this goal promotes. Set if and only if
+   * `type = MARKETING` (enforced by a DB CHECK constraint). Branding and
+   * commercial terms are never duplicated here — this goal stays pure copy.
+   */
+  @Column({ type: 'uuid', name: 'offer_id', nullable: true })
+  offerId: string | null;
+
+  @ManyToOne(() => PartnerOffer, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'offer_id' })
+  offer: PartnerOffer | null;
 
   @OneToMany(() => UserGoal, (userGoal) => userGoal.roadmapGoal)
   userGoals: UserGoal[];

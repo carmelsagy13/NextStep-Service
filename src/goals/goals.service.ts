@@ -3,12 +3,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserGoal, UserGoalStatus } from '../database/entities/user-goal.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
+import { GoalResponseDto } from './dto/goal-response.dto.js';
+import {
+  GOAL_RESPONSE_RELATIONS,
+  resolveAssetBaseUrl,
+  toGoalResponseList,
+} from './goal-response.mapper.js';
 import {
   LlmOrchestratorService,
   PersonalizedGoalRecommendation,
@@ -26,6 +33,7 @@ export class GoalsService {
     private readonly userProfileRepo: Repository<UserProfile>,
     private readonly llmOrchestrator: LlmOrchestratorService,
     private readonly questionnaire: QuestionnaireService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -56,6 +64,7 @@ export class GoalsService {
     // LLM regardless of the user's step or per-criteria scores.
     const allActiveGoals = await this.roadmapGoalRepo.find({
       where: { isActive: true },
+      relations: ['offer', 'offer.partner'],
       order: { priority: 'ASC' },
     });
 
@@ -77,13 +86,18 @@ export class GoalsService {
     return profile.currentStep;
   }
 
-  async getGoals(userId: string, status?: UserGoalStatus) {
+  async getGoals(userId: string, status?: UserGoalStatus): Promise<GoalResponseDto[]> {
     const where = status ? { userId, status } : { userId };
-    return this.goalRepo.find({
+    const goals = await this.goalRepo.find({
       where,
-      relations: ['roadmapGoal'],
+      relations: GOAL_RESPONSE_RELATIONS,
       order: { priority: 'ASC' },
     });
+
+    return toGoalResponseList(
+      goals,
+      resolveAssetBaseUrl(this.config.get<string>('PUBLIC_ASSET_BASE_URL')),
+    );
   }
 
   async createGoal(userId: string, body: any) {
