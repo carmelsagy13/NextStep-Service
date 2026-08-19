@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
+import { Agent } from 'node:https';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { jsonrepair } from 'jsonrepair';
 
@@ -53,6 +54,8 @@ export class LlmClientService implements OnModuleInit {
   // Primary provider selection + fallback toggle.
   private readonly provider: LlmProvider;
   private readonly fallbackEnabled: boolean;
+  /** LLM_GEMINI_ONLY=true skips the college LLM entirely (no VPN needed). */
+  private readonly geminiOnly: boolean;
 
   // ─── College LLM service config ─────────────────────────────────────────
   private readonly collegeHttp: AxiosInstance | null;
@@ -62,6 +65,8 @@ export class LlmClientService implements OnModuleInit {
   private readonly collegeBaseUrl: string;
   private readonly collegeTimeoutMs: number;
   private readonly collegeHasAuth: boolean;
+  private readonly collegeHostHeader: string;
+  private readonly collegeInsecureTls: boolean;
 
   // ─── TEMPORARY DIAGNOSTICS (college model availability probe) ───────────
   private collegeModelsProbe: CollegeModelsProbe = {
@@ -81,11 +86,18 @@ export class LlmClientService implements OnModuleInit {
   private readonly geminiThinkingConfig: Record<string, unknown>;
 
   constructor(private readonly config: ConfigService) {
+    // Master switch: when true the college LLM is never contacted at all.
+    this.geminiOnly =
+      (
+        this.config.get<string>('LLM_GEMINI_ONLY', 'false') || 'false'
+      ).toLowerCase() === 'true';
+
     // 'college' (default) makes the College LLM primary; 'gemini' flips it.
     const provider = (
       this.config.get<string>('LLM_PROVIDER', 'college') || 'college'
     ).toLowerCase();
-    this.provider = provider === 'gemini' ? 'gemini' : 'college';
+    this.provider =
+      this.geminiOnly || provider === 'gemini' ? 'gemini' : 'college';
     this.fallbackEnabled =
       (this.config.get<string>('LLM_FALLBACK', 'true') || 'true').toLowerCase() !==
       'false';
@@ -120,11 +132,24 @@ export class LlmClientService implements OnModuleInit {
       const credentials = Buffer.from(`${username}:${password}`).toString(
         'base64',
       );
-      this.collegeBaseUrl = baseUrl.replace(/\/$/, '');
+      // Accepts base URLs with or without the trailing /v1 — request paths
+      // already carry it.
+      this.collegeBaseUrl = baseUrl
+        .replace(/\/+$/, '')
+        .replace(/\/v1$/i, '');
       this.collegeTimeoutMs = Number(
         this.config.get<string>('COLLEGE_LLM_TIMEOUT_MS', '120000'),
       );
       this.collegeHasAuth = !!username;
+      // The Run:ai gateway routes by Host header, and its certificate is issued
+      // for that hostname rather than the IP — so SNI must use it too.
+      this.collegeHostHeader =
+        this.config.get<string>('COLLEGE_LLM_HOST_HEADER', '') || '';
+      this.collegeInsecureTls =
+        (
+          this.config.get<string>('COLLEGE_LLM_INSECURE_TLS', 'false') || 'false'
+        ).toLowerCase() === 'true';
+
       this.collegeHttp = axios.create({
         baseURL: this.collegeBaseUrl,
         timeout: this.collegeTimeoutMs,
@@ -133,12 +158,25 @@ export class LlmClientService implements OnModuleInit {
           ...(username
             ? { Authorization: `Basic ${credentials}` }
             : {}),
+          ...(this.collegeHostHeader
+            ? { Host: this.collegeHostHeader }
+            : {}),
         },
+        ...(this.collegeBaseUrl.toLowerCase().startsWith('https://')
+          ? {
+              httpsAgent: new Agent({
+                servername: this.collegeHostHeader || undefined,
+                rejectUnauthorized: !this.collegeInsecureTls,
+              }),
+            }
+          : {}),
       });
     } else {
       this.collegeBaseUrl = '';
       this.collegeTimeoutMs = 0;
       this.collegeHasAuth = false;
+      this.collegeHostHeader = '';
+      this.collegeInsecureTls = false;
       this.collegeHttp = null;
     }
 
@@ -174,6 +212,12 @@ export class LlmClientService implements OnModuleInit {
           'and/or GEMINI_API_KEY.',
       );
     }
+
+    if (this.geminiOnly && !this.gemini) {
+      throw new InternalServerErrorException(
+        'LLM_GEMINI_ONLY=true but GEMINI_API_KEY is not set, so no provider is usable.',
+      );
+    }
   }
 
   // ─── TEMPORARY DIAGNOSTICS ────────────────────────────────────────────────
@@ -194,6 +238,12 @@ export class LlmClientService implements OnModuleInit {
         `thinkingConfig=${JSON.stringify(this.geminiThinkingConfig)} | ` +
         `key=${this.gemini ? 'set' : 'missing'}`,
     );
+    if (this.geminiOnly) {
+      this.logger.warn(
+        '[College LLM] BYPASSED — LLM_GEMINI_ONLY=true, every request goes to Gemini (no VPN required)',
+      );
+      return;
+    }
     if (!this.collegeHttp) {
       this.logger.log('[College LLM] not configured (no COLLEGE_LLM_BASE_URL)');
       return;
@@ -202,11 +252,18 @@ export class LlmClientService implements OnModuleInit {
       `[College LLM] config: baseUrl=${this.collegeBaseUrl} | ` +
         `api=${this.collegeApi} | model=${this.collegeModel} | ` +
         `endpoint=POST ${this.collegeEndpoint} | ` +
+        `hostHeader=${this.collegeHostHeader || '(none)'} | ` +
+        `tls=${this.collegeInsecureTls ? 'VERIFICATION DISABLED' : 'verified'} | ` +
         `timeout=${this.collegeTimeoutMs}ms | ` +
         `num_predict/max_tokens=${this.collegeNumPredict} | ` +
         `auth=${this.collegeHasAuth ? 'Basic <redacted>' : 'none'} | ` +
         `primary=${this.provider} | fallback=${this.fallbackEnabled}`,
     );
+    if (this.collegeInsecureTls) {
+      this.logger.warn(
+        '[College LLM] COLLEGE_LLM_INSECURE_TLS=true — server certificate is NOT verified. Use only on the trusted college network.',
+      );
+    }
     // Fire-and-forget: never block bootstrap on the VPN-only college host.
     void this.probeCollegeModels().catch(() => undefined);
   }
@@ -256,28 +313,32 @@ export class LlmClientService implements OnModuleInit {
       }
 
       // Native Ollama listing — shows whether the model exists behind the
-      // gateway even when it is not exposed through the OpenAI surface.
+      // gateway even when it is not exposed through the OpenAI surface. Skipped
+      // on the vLLM gateway, which has no /api/tags and would just time out.
       const t1 = Date.now();
-      try {
-        const { data } = await this.collegeHttp!.get('/api/tags', {
-          timeout: 15_000,
-        });
-        probe.ollamaModelIds = Array.isArray(data?.models)
-          ? data.models.map((m: any) => String(m?.name ?? m?.model ?? '?'))
-          : [];
-        this.logger.log(
-          `[College LLM] GET ${this.collegeBaseUrl}/api/tags -> 200 in ` +
-            `${Date.now() - t1}ms | available models: ` +
-            `${probe.ollamaModelIds!.join(', ') || '<none>'}`,
-        );
-      } catch (err) {
-        const info = this.describeCollegeError(err);
-        probe.ollamaError = `HTTP ${info.status ?? '-'} ${info.code ?? ''} ${info.message}`.trim();
-        this.logger.warn(
-          `[College LLM] GET ${this.collegeBaseUrl}/api/tags FAILED in ` +
-            `${Date.now() - t1}ms | status=${info.status ?? 'n/a'} ` +
-            `code=${info.code ?? 'n/a'} | message=${info.message} | body=${info.body}`,
-        );
+      if (this.collegeApi === 'ollama') {
+        try {
+          const { data } = await this.collegeHttp!.get('/api/tags', {
+            timeout: 15_000,
+          });
+          probe.ollamaModelIds = Array.isArray(data?.models)
+            ? data.models.map((m: any) => String(m?.name ?? m?.model ?? '?'))
+            : [];
+          this.logger.log(
+            `[College LLM] GET ${this.collegeBaseUrl}/api/tags -> 200 in ` +
+              `${Date.now() - t1}ms | available models: ` +
+              `${probe.ollamaModelIds!.join(', ') || '<none>'}`,
+          );
+        } catch (err) {
+          const info = this.describeCollegeError(err);
+          probe.ollamaError =
+            `HTTP ${info.status ?? '-'} ${info.code ?? ''} ${info.message}`.trim();
+          this.logger.warn(
+            `[College LLM] GET ${this.collegeBaseUrl}/api/tags FAILED in ` +
+              `${Date.now() - t1}ms | status=${info.status ?? 'n/a'} ` +
+              `code=${info.code ?? 'n/a'} | message=${info.message} | body=${info.body}`,
+          );
+        }
       }
 
       const listed = [
@@ -383,7 +444,7 @@ export class LlmClientService implements OnModuleInit {
   ): Promise<string> {
     const college: ProviderRunner = {
       name: 'college',
-      available: !!this.collegeHttp,
+      available: !this.geminiOnly && !!this.collegeHttp,
       run: () => this.runCollege(systemPrompt, userContent, label),
     };
     const gemini: ProviderRunner = {

@@ -21,7 +21,6 @@ import type {
   OFBalanceHistory,
   OFDataAccount,
   OFDataTransaction,
-  OFMonthlyReport,
   OFPaginated,
   OFSlimTransaction,
 } from './open-finance-data.types.js';
@@ -60,8 +59,8 @@ import {
  * The aggregated `POST /financial-report/{customerId}` + `GET
  * /financial-report/{jobId}` job is likewise gone, so the report is rebuilt
  * locally from the raw data endpoints (`/v2/data/accounts`,
- * `/v2/data/transactions`, `/v2/data/accounts/{id}/balances/history` and
- * `/v2/data/monthly-report/{userId}`) — see the aggregator for the mapping.
+ * `/v2/data/transactions` and `/v2/data/accounts/{id}/balances/history`) — see
+ * the aggregator for the mapping.
  */
 
 /** Keeps only the transaction fields the aggregator reads. */
@@ -71,7 +70,6 @@ function slimTransaction(tx: OFDataTransaction): OFSlimTransaction {
     accountNumber: tx?.accountNumber,
     providerId: tx?.providerId,
     status: tx?.status,
-    isDuplicate: tx?.isDuplicate,
     amount: {
       chargedAmount: tx?.amount?.chargedAmount,
       originalAmount: tx?.amount?.originalAmount,
@@ -312,19 +310,16 @@ export class OpenFinanceApiService {
           toIsoDate(now),
         );
 
-    const [balanceHistories, monthlyReport] = await Promise.all([
-      this.fetchBalanceHistories(
-        token,
-        accounts,
-        toIsoDate(fromDate),
-        toIsoDate(now),
-      ),
-      this.fetchMonthlyReport(token, customerId),
-    ]);
+    const balanceHistories = await this.fetchBalanceHistories(
+      token,
+      accounts,
+      toIsoDate(fromDate),
+      toIsoDate(now),
+    );
 
     this.logger.log(
       `Fetched ${accounts.length} accounts, ${transactions.length} transactions, ` +
-        `${balanceHistories.length} balance series, monthlyReport=${monthlyReport ? 'yes' : 'no'}`,
+        `${balanceHistories.length} balance series`,
     );
 
     auditRawCollection(
@@ -339,13 +334,11 @@ export class OpenFinanceApiService {
       '/v2/data/balances/history',
       balanceHistories[0] ?? null,
     );
-    auditRawObject(this.logger, '/v2/data/monthly-report', monthlyReport);
 
     const report = buildFinancialReport({
       customerId,
       accounts,
       transactions,
-      monthlyReport,
       balanceHistories,
       now,
     });
@@ -465,31 +458,6 @@ export class OpenFinanceApiService {
       }),
     );
     return histories.filter((h): h is OFBalanceHistory => h != null);
-  }
-
-  /**
-   * GET /v2/data/monthly-report/{userId}. This is the only remaining source of
-   * the behavioural counters (NSF, foreclosures, restriction notices…). A 404
-   * means the report is still being generated, so it is treated as "absent"
-   * rather than as a failure.
-   */
-  private async fetchMonthlyReport(
-    token: string,
-    customerId: string,
-  ): Promise<OFMonthlyReport | null> {
-    try {
-      const { data } = await this.http.get<OFMonthlyReport>(
-        `/v2/data/monthly-report/${encodeURIComponent(customerId)}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      return data;
-    } catch (err) {
-      this.logger.warn(
-        `monthly-report unavailable for customer ${customerId}: ` +
-          describeAxiosError(err as AxiosError),
-      );
-      return null;
-    }
   }
 
   /** Walks a cursor-paginated /v2/data endpoint until it runs out of pages. */

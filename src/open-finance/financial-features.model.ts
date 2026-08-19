@@ -89,7 +89,15 @@ export interface FinancialFeatures {
   avgMonthlyCreditCardSpend: number;
   /** Σ of avgCardFee across cards (nulls treated as 0). */
   creditCardFeesTotal: number;
-
+  // ── Overdraft facility (checking accounts) ── PARKED ──────────────────────
+  // Derived from OFCheckingAccount.creditLimit. Re-enable together with the
+  // extractor block, the aggregator's creditLimit mapping and the prompt lines.
+  // /** Σ approved overdraft limits across checking accounts. */
+  // overdraftLimit: number;
+  // /** How much of the overdraft is actually drawn (Σ negative checking balances). */
+  // overdraftUsed: number;
+  // /** overdraftUsed / overdraftLimit as a percentage; 0 when no facility exists. */
+  // overdraftUtilisation: number;
   // ── Derived ratios ────────────────────────────────────────────────────────
   /** % of monthly income directed to savings/investments contributions. */
   savingsRate: number;
@@ -108,6 +116,11 @@ export interface FinancialFeatures {
     akamCount: number;
     cancelledCount: number;
   };
+  /**
+   * False when no source supplied the behavioural counters. The zeros in
+   * `systemFlags` are then placeholders, NOT evidence of a clean credit record.
+   */
+  systemFlagsAvailable: boolean;
 
   // ── Provenance ────────────────────────────────────────────────────────────
   /** Whether the report actually contained any usable financial data. */
