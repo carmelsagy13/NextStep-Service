@@ -242,7 +242,8 @@ export function buildFinancialReport(
     accountNumber: a?.accountNumber,
     accountId: a?.id,
     currency: currencyOf(a),
-    creditLimit: round(num(a?.creditLimit?.amount)),
+    // PARKED with the overdraft feature:
+    // creditLimit: round(num(a?.creditLimit?.amount)),
   });
   const checkingAccounts = checkingAcc.map(toCheckingEntry);
   const checkingAccountsILS = checkingAccounts.filter(

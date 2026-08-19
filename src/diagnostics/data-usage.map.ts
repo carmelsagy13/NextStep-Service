@@ -233,9 +233,10 @@ export const FEATURE_USAGE: Record<string, string> = {
   activeCreditCardsCount: 'LLM profile + state prompts',
   avgMonthlyCreditCardSpend: 'LLM profile prompt',
   creditCardFeesTotal: 'LLM profile prompt',
-  overdraftLimit: 'LLM profile prompt (credit_consumption / cash_flow)',
-  overdraftUsed: 'LLM profile prompt (credit_consumption / cash_flow)',
-  overdraftUtilisation: 'LLM profile prompt (credit_consumption / cash_flow)',
+  // PARKED with the overdraft feature:
+  // overdraftLimit: 'LLM profile prompt (credit_consumption / cash_flow)',
+  // overdraftUsed: 'LLM profile prompt (credit_consumption / cash_flow)',
+  // overdraftUtilisation: 'LLM profile prompt (credit_consumption / cash_flow)',
   savingsRate: 'LLM profile prompt',
   discretionarySurplus: 'LLM profile + state, loss-aversion',
   systemFlags: 'LLM profile prompt (BDI counters)',
@@ -246,7 +247,7 @@ export const FEATURE_USAGE: Record<string, string> = {
 
 /**
  * Fields where a falsy value is a real reading, not a missing mapping.
- * `overdraftUsed: 0` means "facility untouched"; `systemFlagsAvailable: false`
+ * `hasActiveLoans: false` means "no loans"; `systemFlagsAvailable: false`
  * means "counters unknown" — neither indicates broken extraction.
  */
 export const MEANINGFUL_WHEN_FALSY = new Set([
@@ -254,8 +255,9 @@ export const MEANINGFUL_WHEN_FALSY = new Set([
   'hasData',
   'hasActiveLoans',
   'hasMortgage',
-  'overdraftUsed',
-  'overdraftUtilisation',
+  // PARKED with the overdraft feature:
+  // 'overdraftUsed',
+  // 'overdraftUtilisation',
   'deficitMonthsCount',
   'loanVSaffordability',
   'mortgageVSaffordability',

@@ -89,13 +89,15 @@ export interface FinancialFeatures {
   avgMonthlyCreditCardSpend: number;
   /** Σ of avgCardFee across cards (nulls treated as 0). */
   creditCardFeesTotal: number;
-  // ── Overdraft facility (checking accounts) ────────────────────────────
-  /** Σ approved overdraft limits across checking accounts. */
-  overdraftLimit: number;
-  /** How much of the overdraft is actually drawn (Σ negative checking balances). */
-  overdraftUsed: number;
-  /** overdraftUsed / overdraftLimit as a percentage; 0 when no facility exists. */
-  overdraftUtilisation: number;
+  // ── Overdraft facility (checking accounts) ── PARKED ──────────────────────
+  // Derived from OFCheckingAccount.creditLimit. Re-enable together with the
+  // extractor block, the aggregator's creditLimit mapping and the prompt lines.
+  // /** Σ approved overdraft limits across checking accounts. */
+  // overdraftLimit: number;
+  // /** How much of the overdraft is actually drawn (Σ negative checking balances). */
+  // overdraftUsed: number;
+  // /** overdraftUsed / overdraftLimit as a percentage; 0 when no facility exists. */
+  // overdraftUtilisation: number;
   // ── Derived ratios ────────────────────────────────────────────────────────
   /** % of monthly income directed to savings/investments contributions. */
   savingsRate: number;

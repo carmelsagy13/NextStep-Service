@@ -123,9 +123,10 @@ export function emptyFeatures(): FinancialFeatures {
     activeCreditCardsCount: 0,
     avgMonthlyCreditCardSpend: 0,
     creditCardFeesTotal: 0,
-    overdraftLimit: 0,
-    overdraftUsed: 0,
-    overdraftUtilisation: 0,
+    // PARKED with the overdraft feature:
+    // overdraftLimit: 0,
+    // overdraftUsed: 0,
+    // overdraftUtilisation: 0,
     savingsRate: 0,
     discretionarySurplus: 0,
     systemFlags: {
@@ -245,23 +246,23 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
       )
     : 0;
 
-  // ── Overdraft facility ─────────────────────────────────────────────────────
+  // ── Overdraft facility ── PARKED ───────────────────────────────────────────
   // Only the CHECKING account carries a trustworthy limit: the provider reports
   // creditLimit=0 on the credit-line account itself and placeholder values on
   // cards, so card utilisation is deliberately not derived here.
-  const checkingForLimits = report.checkingAccountsILS?.length
-    ? report.checkingAccountsILS
-    : (report.checkingAccounts ?? []);
-  const overdraftLimit = round(
-    checkingForLimits.reduce((acc, a) => acc + num(a?.creditLimit), 0),
-  );
-  const overdraftUsed = round(
-    checkingForLimits.reduce((acc, a) => acc + Math.max(0, -num(a?.amount)), 0),
-  );
-  const overdraftUtilisation =
-    overdraftLimit > 0
-      ? Math.round((overdraftUsed / overdraftLimit) * 100)
-      : 0;
+  // const checkingForLimits = report.checkingAccountsILS?.length
+  //   ? report.checkingAccountsILS
+  //   : (report.checkingAccounts ?? []);
+  // const overdraftLimit = round(
+  //   checkingForLimits.reduce((acc, a) => acc + num(a?.creditLimit), 0),
+  // );
+  // const overdraftUsed = round(
+  //   checkingForLimits.reduce((acc, a) => acc + Math.max(0, -num(a?.amount)), 0),
+  // );
+  // const overdraftUtilisation =
+  //   overdraftLimit > 0
+  //     ? Math.round((overdraftUsed / overdraftLimit) * 100)
+  //     : 0;
 
   // ── Derived ratios ───────────────────────────────────────────────────────────
   // Savings rate based on what the user moves into savings/investments each
@@ -392,9 +393,10 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
     activeCreditCardsCount,
     avgMonthlyCreditCardSpend,
     creditCardFeesTotal,
-    overdraftLimit,
-    overdraftUsed,
-    overdraftUtilisation,
+    // PARKED with the overdraft feature:
+    // overdraftLimit,
+    // overdraftUsed,
+    // overdraftUtilisation,
     savingsRate,
     discretionarySurplus,
     systemFlags,

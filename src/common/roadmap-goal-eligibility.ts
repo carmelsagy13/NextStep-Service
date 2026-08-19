@@ -55,7 +55,10 @@ export function isRoadmapGoalEligible(
   goal: RoadmapGoal,
   context: { currentStep: number; criteriaScores: CriteriaScores },
 ): boolean {
-  if (goal.criteria === null) {
+  // Some seed rows carry the literal 'general' instead of NULL; it is not one
+  // of the 8 criteria, so without this it would fall through to an undefined
+  // score lookup and the goal could never become eligible.
+  if (goal.criteria === null || (goal.criteria as string) === 'general') {
     // General goal: exact step match (unchanged).
     return goal.stepId === context.currentStep;
   } else {
