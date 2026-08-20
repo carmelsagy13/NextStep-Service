@@ -60,11 +60,12 @@ export const TABLE_USAGE: Record<string, TableUsage> = {
   },
   user_goals: {
     entity: 'UserGoal',
-    purpose: 'Concrete tasks assigned to a user from roadmap_goals templates',
+    purpose:
+      'Concrete tasks assigned to a user from roadmap_goals templates, plus the user\u2019s "not relevant" feedback on them',
     writtenBy:
-      'goals.createGoal/updateGoal, open-finance.applyReconciliation, aspiration-sync',
+      'goals.createGoal/updateGoal/dismissGoal, open-finance.applyReconciliation, aspiration-sync',
     readBy:
-      'goals.listGoals/updateGoal, open-finance.loadUserContext/applyReconciliation',
+      'goals.listGoals/updateGoal, open-finance.loadUserContext/applyReconciliation, llm-orchestrator.personalizeGoals (dismissal feedback)',
     verdict: 'ACTIVE',
   },
   roadmap_goals: {

@@ -40,6 +40,7 @@ import {
   isMarketingGoalAllowed,
   MAX_ACTIVE_MARKETING_GOALS,
 } from '../common/marketing-goal-policy.js';
+import { buildDismissalFeedbackSection } from '../common/goal-dismissal-feedback.js';
 import { GoalResponseDto } from '../goals/dto/goal-response.dto.js';
 import {
   GOAL_RESPONSE_RELATIONS,
@@ -93,6 +94,8 @@ export interface PersistAnalysisResult {
     relevant_but_premature: string[];
     /** Why a sponsored goal was or was not offered in this pass. */
     marketing_rationale?: string;
+    /** How the user's "not relevant" feedback shaped this selection. */
+    dismissal_feedback_applied?: string;
   };
 }
 
@@ -150,6 +153,7 @@ export interface ReconciliationDecision {
     why_not_added: string;
     relevant_but_premature: string[];
     marketing_rationale?: string;
+    dismissal_feedback_applied?: string;
   };
 }
 
@@ -703,6 +707,7 @@ export class OpenFinanceService {
 
     const priorStep = context.currentProfile?.currentStep ?? null;
     const priorProgress = context.currentState?.progressPercent ?? null;
+    const riskTolerance = context.currentProfile?.riskTolerance ?? null;
 
     const historySection = context.history.length
       ? context.history
@@ -753,11 +758,17 @@ export class OpenFinanceService {
       '- NEVER invent IDs. NEVER duplicate an existing task: if a relevant goal template',
       '  is already present among the existing tasks, KEEP or REPRIORITIZE it instead of adding it.',
       '- Put tasks that are no longer relevant (e.g. ones the user has outgrown or that no longer fit their situation) into "remove". Do NOT remove a task merely because it belongs to a different step than the current one — keep it if it is still suitable.',
+      '- Do NOT re-add a task the user marked as NOT RELEVANT (see that section below) unless their financial data changed materially enough that their stated reason no longer holds.',
       '- Put tasks the data shows are achieved into "complete".',
       '- Only "add" templates that are genuinely relevant and not already assigned.',
       '- An aspiration is a SIDE INTEREST, not a filter on the roadmap. Select and rank tasks EXACTLY as you would if the user had declared no aspirations at all, then optionally add ONE task that serves an aspiration. An aspiration must NEVER be a reason to remove, skip, deprioritise or decline to add a roadmap task that the financial data supports on its own — the roadmap is what moves the user up the pyramid; an aspiration only says what they are personally saving for.',
       '- At most ONE aspiration-linked task should be active per aspiration, and aspiration-linked tasks must not occupy the top priority slots ahead of current-step roadmap tasks.',
       '- When adding a goal, fill dynamic_params with REAL numbers taken from the financial features block (e.g. surplus, currentBalance, activeCreditCardsCount, totalInvestments). NEVER invent figures; if a value is not derivable from the features, use null.',
+      ...(riskTolerance
+        ? [
+            `- The user's assessed RISK TOLERANCE is ${riskTolerance} (CONSERVATIVE | MODERATE | AGGRESSIVE), derived from a dedicated risk questionnaire. Use it to choose BETWEEN goals of comparable financial merit: a CONSERVATIVE user should be steered toward capital-preservation, buffer and debt-reduction goals over market-exposed ones, while an AGGRESSIVE user may be offered growth and investment goals earlier. Risk tolerance NEVER overrides the financial data: it must not justify adding an investment goal to a user in deficit or without an emergency buffer, nor removing a goal the numbers clearly support.`,
+          ]
+        : []),
       '- A dynamic_params key that describes what the user has ALREADY achieved (a count of months, times, streaks or an amount accumulated so far) may ONLY be filled from an actual measurement in the features block. If no feature measures it, set it to null. NEVER copy the goal\u2019s target number into such a key: a goal of "6 consecutive months" does NOT mean 6 months are already done, and writing 6 there tells the user they have finished when they have not. When unsure, null is always the correct answer.',
       '',
       '## Sponsored Goals (type = "marketing") — STRICT RULES',
@@ -823,6 +834,7 @@ export class OpenFinanceService {
       '',
       '## Existing Tasks',
       existingTasksSection,
+      buildDismissalFeedbackSection(context.existingTasks),
       '',
       "## User's Overarching Goals (Aspirations) — LOW WEIGHT, context only",
       'Personal savings targets the user happens to have. They do NOT describe the',
@@ -896,6 +908,8 @@ export class OpenFinanceService {
             '<array of roadmap_goal_id strings: goals that ARE relevant but the user is not ready for them yet>',
           marketing_rationale:
             "<Hebrew: which sponsored goal was added and what in the user's numbers justifies it — or why none was added>",
+          dismissal_feedback_applied:
+            "<Hebrew: how the user's 'not relevant' feedback shaped this selection — or 'no feedback' when they have given none>",
         },
       }),
       '',
@@ -962,6 +976,7 @@ export class OpenFinanceService {
       task_selection_reasoning: {
         why_not_added: tsr.why_not_added ?? '',
         relevant_but_premature: arr(tsr.relevant_but_premature),
+        dismissal_feedback_applied: tsr.dismissal_feedback_applied ?? '',
       },
     };
   }
@@ -1224,6 +1239,7 @@ export class OpenFinanceService {
           dup.status = UserGoalStatus.ACTIVE;
           dup.removedAt = null;
           dup.removalReason = null;
+          // dismissal* is user-authored feedback, not machine state — it stays.
           // Reactivation is a fresh assignment, so it re-anchors to this step.
           dup.assignedAtStep = currentStep;
           dup.dynamicParams = a.dynamic_params ?? dup.dynamicParams ?? {};

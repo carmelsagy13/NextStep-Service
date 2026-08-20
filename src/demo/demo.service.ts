@@ -23,6 +23,8 @@ export interface DemoTriggerResult {
   mode: 'full' | 'partial';
   /** Which source fed the full pipeline: local demo file or the live OF API. */
   source?: 'file' | 'api';
+  /** True when the run used the demo data source instead of live user data. */
+  demo?: boolean;
   /** Full analysis result when mode === 'full'. */
   full?: ConnectApiResult | PersistAnalysisResult;
   /** Number of aspiration-linked tasks refreshed when mode === 'partial'. */
@@ -48,25 +50,22 @@ export class DemoService {
   }
 
   /**
-   * FULL pipeline — runs on every LOGIN.
+   * FULL pipeline — runs on every LOGIN, in demo mode and in regular mode.
    *
    * Always re-runs the complete profile classification + state determination +
    * task reconciliation, regardless of whether the user already has a profile
-   * (overwriting the existing roadmap/goals). The data SOURCE is selectable so
-   * the demo works even when the live Open Finance API is unavailable:
-   *   • DEMO_DATA_PATH set   → read that local JSON file and analyze it
-   *     (same pipeline as POST /openfinance/upload).
-   *   • DEMO_DATA_PATH unset → call the live Open Finance API using the user's
-   *     national ID (same pipeline as POST /openfinance/connect-api).
-   *
-   * @throws ForbiddenException  when DEMO_MODE is not enabled.
+   * (overwriting the existing roadmap/goals). Only the data SOURCE differs:
+   *   • DEMO_MODE=true  + DEMO_DATA_PATH set → read that local JSON file
+   *     (same pipeline as POST /openfinance/upload; works offline).
+   *   • DEMO_MODE=true  + DEMO_DATA_PATH unset → live Open Finance API.
+   *   • DEMO_MODE=false → live Open Finance API using the user's national ID
+   *     (same pipeline as POST /openfinance/connect-api).
    */
-  async runFull(userId: string): Promise<DemoTriggerResult> {
-    if (!this.isDemoMode()) {
-      throw new ForbiddenException('Demo mode is not enabled on this server.');
-    }
-
-    const dataPath = this.config.get<string>('DEMO_DATA_PATH', '').trim();
+  async runLoginAnalysis(userId: string): Promise<DemoTriggerResult> {
+    const demo = this.isDemoMode();
+    const dataPath = demo
+      ? this.config.get<string>('DEMO_DATA_PATH', '').trim()
+      : '';
 
     // ── Source A: local demo file ────────────────────────────────────────
     if (dataPath) {
@@ -78,15 +77,15 @@ export class DemoService {
         bankingData,
         userId,
       );
-      return { mode: 'full', source: 'file', full };
+      return { mode: 'full', source: 'file', demo, full };
     }
 
     // ── Source B: live Open Finance API ──────────────────────────────────
     this.logger.log(
-      `[Demo] LOGIN full pipeline for userId=${userId} via Open Finance API.`,
+      `LOGIN full pipeline for userId=${userId} via Open Finance API (demo=${demo}).`,
     );
     const full = await this.openFinanceApi.connectAndAnalyze(userId);
-    return { mode: 'full', source: 'api', full };
+    return { mode: 'full', source: 'api', demo, full };
   }
 
   /**

@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   ConflictException,
 } from '@nestjs/common';
@@ -15,6 +16,8 @@ import { DemoService, DemoTriggerResult } from '../demo/demo.service.js';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -72,26 +75,23 @@ export class AuthService {
       demoMode: this.isDemoMode(),
     };
 
-    if (!this.isDemoMode()) {
-      return base;
-    }
-
-    // Demo Mode: every LOGIN re-runs the FULL LLM pipeline (overwriting any
-    // existing roadmap/goals) and returns the result inline so the client can
-    // render the fresh roadmap immediately. Session REFRESH uses the lightweight
-    // POST /demo/trigger endpoint instead.
-    let demoResult: DemoTriggerResult | undefined;
+    // Every LOGIN re-runs the FULL LLM pipeline (overwriting any existing
+    // roadmap/goals) and returns the result inline so the client can render the
+    // fresh roadmap immediately. In Demo Mode the data comes from the local
+    // DEMO_DATA_PATH file; otherwise it is pulled live from Open Finance using
+    // the user's national ID. Session REFRESH uses POST /demo/trigger instead.
+    let loginAnalysis: DemoTriggerResult | undefined;
     try {
-      demoResult = await this.demo.runFull(user.userId);
+      loginAnalysis = await this.demo.runLoginAnalysis(user.userId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Non-fatal: log and continue so the client still gets its JWT
-      console.warn(
-        `[Demo] Login full-run failed for userId=${user.userId}: ${msg}`,
+      this.logger.warn(
+        `Login analysis failed for userId=${user.userId}: ${msg}`,
       );
     }
 
-    return { ...base, demoResult };
+    return { ...base, loginAnalysis };
   }
 
   private isDemoMode(): boolean {

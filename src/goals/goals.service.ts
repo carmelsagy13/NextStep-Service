@@ -5,14 +5,16 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DeepPartial, Repository } from 'typeorm';
+import { DeepPartial, Not, IsNull, Repository } from 'typeorm';
 import {
   UserGoal,
   UserGoalStatus,
+  GoalDismissalReason,
 } from '../database/entities/user-goal.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
+import { DismissGoalDto } from './dto/dismiss-goal.dto.js';
 import { GoalResponseDto } from './dto/goal-response.dto.js';
 import {
   GOAL_RESPONSE_RELATIONS,
@@ -39,6 +41,9 @@ const SERVER_OWNED_GOAL_FIELDS = [
   'completedAtStep',
   'removedAt',
   'removalReason',
+  'dismissalReason',
+  'dismissalNote',
+  'dismissedAt',
   'sourceProfileHistoryId',
 ] as const;
 
@@ -83,6 +88,12 @@ export class GoalsService {
     // LLM personalization. Resolves to null when onboarding was never completed.
     const questionnaire = await this.questionnaire.buildLatestSummary(userId);
 
+    // Tasks the user rejected, so the model can steer away from similar ones.
+    const dismissedGoals = await this.goalRepo.find({
+      where: { userId, dismissalReason: Not(IsNull()) },
+      order: { dismissedAt: 'DESC' },
+    });
+
     // ── Step 1: Fetch all active goals ────────────────────────────────────
     // Stage/eligibility limit removed: the full active goal set is handed to the
     // LLM regardless of the user's step or per-criteria scores.
@@ -101,6 +112,7 @@ export class GoalsService {
       profile,
       allActiveGoals,
       questionnaire,
+      dismissedGoals,
     );
     return result;
   }
@@ -183,9 +195,41 @@ export class GoalsService {
   }
 
   /**
-   * Applies a lifecycle status change and keeps the associated timestamps
-   * consistent. Centralized so every status mutation records when it happened.
+   * Records that the user considers a task irrelevant and retires it. The reason
+   * is fed back into the goal-selection prompts so later tasks fit better.
    */
+  async dismissGoal(userId: string, dto: DismissGoalDto) {
+    const goal = await this.goalRepo.findOne({
+      where: { goalId: dto.goalId, userId },
+    });
+
+    if (!goal)
+      throw new NotFoundException(
+        'Goal not found or does not belong to this user',
+      );
+
+    if (goal.status === UserGoalStatus.COMPLETED)
+      throw new BadRequestException(
+        'A completed task cannot be marked as not relevant',
+      );
+
+    goal.dismissalReason = dto.reason;
+    // The note only ever elaborates on `other`; it is meaningless otherwise.
+    goal.dismissalNote =
+      dto.reason === GoalDismissalReason.OTHER
+        ? (dto.note?.trim() ?? null)
+        : null;
+    goal.dismissedAt = new Date();
+
+    this.applyStatusTransition(
+      goal,
+      UserGoalStatus.ABANDONED,
+      await this.resolveCurrentStepOrNull(userId),
+    );
+
+    return this.goalRepo.save(goal);
+  }
+
   private applyStatusTransition(
     goal: UserGoal,
     status: UserGoalStatus,
@@ -209,6 +253,15 @@ export class GoalsService {
       status === UserGoalStatus.EXPIRED
         ? new Date()
         : null;
+
+    // Reactivating is the user retracting their "not relevant" verdict, so the
+    // feedback is withdrawn too. An LLM-driven reactivation bypasses this and
+    // deliberately keeps the history.
+    if (status === UserGoalStatus.ACTIVE) {
+      goal.dismissalReason = null;
+      goal.dismissalNote = null;
+      goal.dismissedAt = null;
+    }
   }
 
   async deleteGoal(goalId: string) {

@@ -30,6 +30,20 @@ export enum UserGoalStatus {
   EXPIRED = 'expired',
 }
 
+/**
+ * Why the user marked a task as not relevant for them. Captured when a task is
+ * dismissed so future task selection can avoid goals with the same mismatch.
+ */
+export enum GoalDismissalReason {
+  ALREADY_DONE = 'already_done',
+  NO_BUDGET = 'no_budget',
+  NO_TIME = 'no_time',
+  RISK_MISMATCH = 'risk_mismatch',
+  TOO_COMPLEX = 'too_complex',
+  NOT_RELEVANT = 'not_relevant',
+  OTHER = 'other',
+}
+
 @Entity('user_goals')
 export class UserGoal {
   @PrimaryGeneratedColumn('uuid', { name: 'goal_id' })
@@ -126,6 +140,25 @@ export class UserGoal {
   /** LLM/user justification recorded when a task transitions to REMOVED. */
   @Column({ type: 'text', name: 'removal_reason', nullable: true })
   removalReason: string | null;
+
+  // ── User "not relevant" feedback ─────────────────────────────────────────
+  // Deliberately separate from `removalReason`, which the reconciliation LLM
+  // writes: mixing machine decisions with user feedback corrupts the signal.
+  // These survive a later LLM reactivation of the task — they are history.
+  @Column({
+    type: 'enum',
+    enum: GoalDismissalReason,
+    name: 'dismissal_reason',
+    nullable: true,
+  })
+  dismissalReason: GoalDismissalReason | null;
+
+  /** Free-text elaboration, only captured for {@link GoalDismissalReason.OTHER}. */
+  @Column({ type: 'text', name: 'dismissal_note', nullable: true })
+  dismissalNote: string | null;
+
+  @Column({ type: 'timestamp', name: 'dismissed_at', nullable: true })
+  dismissedAt: Date | null;
 
   /**
    * Provenance: the UserProfileHistory assessment that last created, reactivated

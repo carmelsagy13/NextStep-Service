@@ -11,6 +11,7 @@ import { GoalsService } from './goals.service.js';
 import { StepIsolationGuard } from './guards/step-isolation.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
+import { DismissGoalDto } from './dto/dismiss-goal.dto.js';
 import { GoalResponseDto } from './dto/goal-response.dto.js';
 import { UserGoalStatus } from '../database/entities/user-goal.entity.js';
 
@@ -70,6 +71,19 @@ export class GoalsController {
     @Body() dto: UpdateGoalDto,
   ) {
     return this.goalsService.updateGoal(user.userId, dto);
+  }
+
+  @Post('dismiss')
+  @ApiOperation({
+    summary: 'Mark a goal as not relevant for the user',
+    description:
+      'Retires the task (status `abandoned`) and records why it did not fit, so later goal selection can avoid the same mismatch. Undo by calling POST /goals/update with status `active`, which also clears the recorded feedback.',
+  })
+  dismissGoal(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: DismissGoalDto,
+  ) {
+    return this.goalsService.dismissGoal(user.userId, dto);
   }
 
   @Post('delete')

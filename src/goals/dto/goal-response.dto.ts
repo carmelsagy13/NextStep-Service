@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RoadmapGoalType } from '../../database/entities/roadmap-goal.entity.js';
-import { UserGoalStatus } from '../../database/entities/user-goal.entity.js';
+import {
+  GoalDismissalReason,
+  UserGoalStatus,
+} from '../../database/entities/user-goal.entity.js';
 
 /**
  * Everything the client needs to render a sponsored goal. Present only when the
@@ -64,6 +67,10 @@ export class GoalResponseDto {
   @ApiProperty({ nullable: true }) completedAtStep: number | null;
   @ApiProperty({ nullable: true }) removedAt: Date | null;
   @ApiProperty({ nullable: true }) removalReason: string | null;
+  @ApiProperty({ enum: GoalDismissalReason, nullable: true })
+  dismissalReason: GoalDismissalReason | null;
+  @ApiProperty({ nullable: true }) dismissalNote: string | null;
+  @ApiProperty({ nullable: true }) dismissedAt: Date | null;
   @ApiProperty({ nullable: true }) sourceProfileHistoryId: string | null;
   @ApiProperty({ nullable: true }) aiInsight: string | null;
   @ApiProperty({ type: Object, nullable: true }) dynamicParams: Record<

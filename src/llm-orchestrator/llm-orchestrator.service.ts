@@ -12,6 +12,8 @@ import {
   RoadmapGoalType,
 } from '../database/entities/roadmap-goal.entity.js';
 import { filterMarketingGoals } from '../common/marketing-goal-policy.js';
+import { buildDismissalFeedbackSection } from '../common/goal-dismissal-feedback.js';
+import { UserGoal } from '../database/entities/user-goal.entity.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import {
   QuestionnaireSummary,
@@ -106,11 +108,15 @@ export class LlmOrchestratorService {
    *
    * `questionnaire`, when provided, lets the user's self-declared goals and
    * off-platform context inform prioritization and the Hebrew insight text.
+   *
+   * `dismissedGoals` are tasks the user explicitly marked as not relevant; their
+   * stated reasons push similar goals down the ranking.
    */
   async personalizeGoals(
     profile: UserProfile,
     filteredGoals: RoadmapGoal[],
     questionnaire: QuestionnaireSummary | null = null,
+    dismissedGoals: UserGoal[] = [],
   ): Promise<PersonalizedGoalRecommendation[]> {
     // Sponsored goals are gated BEFORE the model sees them, so an unsuitable
     // offer can never be recommended no matter what the model decides.
@@ -170,6 +176,7 @@ export class LlmOrchestratorService {
       '',
       '## Available Goals — you MUST include every one of these, no additions',
       JSON.stringify(goalList, null, 2),
+      buildDismissalFeedbackSection(dismissedGoals),
       '',
       '## Your Task',
       '1. For EACH goal in the list, write a brief personalized Hebrew ai_insight.',
@@ -254,6 +261,7 @@ export class LlmOrchestratorService {
       candidateGoals,
       result,
       questionnaire,
+      dismissedGoals,
     );
 
     return result;
@@ -277,6 +285,7 @@ export class LlmOrchestratorService {
     filteredGoals: RoadmapGoal[],
     recommendations: PersonalizedGoalRecommendation[],
     questionnaire: QuestionnaireSummary | null = null,
+    dismissedGoals: UserGoal[] = [],
   ): Promise<void> {
     try {
       const contextSnapshot = {
@@ -295,6 +304,12 @@ export class LlmOrchestratorService {
         },
         candidate_goal_ids: filteredGoals.map((g) => g.goalId),
         questionnaire: questionnaire ?? null,
+        dismissed_goals: dismissedGoals.map((g) => ({
+          goal_id: g.goalId,
+          roadmap_goal_id: g.roadmapGoalId ?? null,
+          reason: g.dismissalReason,
+          note: g.dismissalNote,
+        })),
         recommendations,
       };
 
