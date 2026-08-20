@@ -86,7 +86,9 @@ export class AuthService {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Non-fatal: log and continue so the client still gets its JWT
-      console.warn(`[Demo] Login full-run failed for userId=${user.userId}: ${msg}`);
+      console.warn(
+        `[Demo] Login full-run failed for userId=${user.userId}: ${msg}`,
+      );
     }
 
     return { ...base, demoResult };

@@ -98,9 +98,6 @@ export class QuestionnaireQuestion {
   options: QuestionnaireOption[];
 
   /** Conditional rules that control THIS question's visibility. */
-  @OneToMany(
-    () => QuestionnaireDependency,
-    (dependency) => dependency.question,
-  )
+  @OneToMany(() => QuestionnaireDependency, (dependency) => dependency.question)
   dependencies: QuestionnaireDependency[];
 }

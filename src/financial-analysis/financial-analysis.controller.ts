@@ -9,7 +9,9 @@ import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 @UseGuards(AuthGuard('jwt'))
 @Controller('finance')
 export class FinancialAnalysisController {
-  constructor(private readonly financialAnalysisService: FinancialAnalysisService) {}
+  constructor(
+    private readonly financialAnalysisService: FinancialAnalysisService,
+  ) {}
 
   @Get('snapshot')
   @ApiOperation({ summary: 'Get computed financial snapshot' })

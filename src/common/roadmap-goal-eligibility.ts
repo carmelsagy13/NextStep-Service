@@ -1,4 +1,7 @@
-import { RoadmapGoal, RoadmapGoalCriteria } from '../database/entities/roadmap-goal.entity.js';
+import {
+  RoadmapGoal,
+  RoadmapGoalCriteria,
+} from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 
 /**
@@ -20,7 +23,9 @@ export interface CriteriaScores {
  * Extracts the 8 granular criteria scores from a UserProfile entity, mapping
  * camelCase field names to snake_case criteria keys.
  */
-export function criteriaScoresFromProfile(profile: UserProfile): CriteriaScores {
+export function criteriaScoresFromProfile(
+  profile: UserProfile,
+): CriteriaScores {
   return {
     cash_flow: profile.cashFlow ?? null,
     credit_consumption: profile.creditConsumption ?? null,

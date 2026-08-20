@@ -64,10 +64,22 @@ export class UserGoal {
   @Column({ type: 'jsonb', name: 'dynamic_params', nullable: true })
   dynamicParams: Record<string, any>;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, name: 'target_amount', nullable: true })
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    name: 'target_amount',
+    nullable: true,
+  })
   targetAmount: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, name: 'current_amount', default: 0 })
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    name: 'current_amount',
+    default: 0,
+  })
   currentAmount: number;
 
   @Column({ type: 'date', name: 'target_date', nullable: true })
@@ -88,8 +100,25 @@ export class UserGoal {
   @CreateDateColumn({ type: 'timestamp', name: 'assigned_at' })
   assignedAt: Date;
 
+  /**
+   * The roadmap step the user stood on when this task was assigned. NULL for
+   * rows created before step attribution existed, and whenever the user has no
+   * current step yet (no analysis run).
+   */
+  @Column({ type: 'int', name: 'assigned_at_step', nullable: true })
+  assignedAtStep: number | null;
+
   @Column({ type: 'timestamp', name: 'completed_at', nullable: true })
   completedAt: Date | null;
+
+  /**
+   * The roadmap step the user stood on when this task was completed. Lets the
+   * client show a step's history without inferring it from the roadmap
+   * template, whose step_id is the eligibility threshold — not where the user
+   * actually was. Cleared alongside `completedAt` when a task is un-completed.
+   */
+  @Column({ type: 'int', name: 'completed_at_step', nullable: true })
+  completedAtStep: number | null;
 
   @Column({ type: 'timestamp', name: 'removed_at', nullable: true })
   removedAt: Date | null;
@@ -113,7 +142,10 @@ export class UserGoal {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @ManyToOne(() => RoadmapGoal, (roadmapGoal) => roadmapGoal.userGoals, { onDelete: 'SET NULL', nullable: true })
+  @ManyToOne(() => RoadmapGoal, (roadmapGoal) => roadmapGoal.userGoals, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
   @JoinColumn({ name: 'roadmap_goal_id' })
   roadmapGoal: RoadmapGoal;
 

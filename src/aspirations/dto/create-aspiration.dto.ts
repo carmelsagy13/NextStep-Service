@@ -14,7 +14,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * `attributes` blob is validated against that goal type's attribute schema.
  */
 export class CreateAspirationDto {
-  @ApiProperty({ description: 'Goal type code from goal_type_catalog (e.g. wedding_event)' })
+  @ApiProperty({
+    description: 'Goal type code from goal_type_catalog (e.g. wedding_event)',
+  })
   @IsString()
   goalTypeCode: string;
 
@@ -24,13 +26,16 @@ export class CreateAspirationDto {
   @Min(0)
   targetAmount?: number;
 
-  @ApiPropertyOptional({ description: 'Target date (ISO-8601, e.g. 2027-06-01)' })
+  @ApiPropertyOptional({
+    description: 'Target date (ISO-8601, e.g. 2027-06-01)',
+  })
   @IsOptional()
   @IsDateString()
   targetDate?: string;
 
   @ApiPropertyOptional({
-    description: 'Dynamic, goal-type-specific attributes (validated against the catalog schema)',
+    description:
+      'Dynamic, goal-type-specific attributes (validated against the catalog schema)',
   })
   @IsOptional()
   @IsObject()

@@ -24,14 +24,17 @@ export class AspirationsController {
 
   @Get('types')
   @ApiOperation({
-    summary: 'List the active goal types a user can declare (data-driven catalog)',
+    summary:
+      'List the active goal types a user can declare (data-driven catalog)',
   })
   getGoalTypes() {
     return this.aspirationsService.getGoalTypes();
   }
 
   @Get()
-  @ApiOperation({ summary: "Get the current user's overarching goals (aspirations)" })
+  @ApiOperation({
+    summary: "Get the current user's overarching goals (aspirations)",
+  })
   getAspirations(@CurrentUser() user: { userId: string }) {
     return this.aspirationsService.getAspirations(user.userId);
   }

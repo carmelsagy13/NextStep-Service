@@ -9,9 +9,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * step. The drop is idempotent (IF EXISTS); the `down` migration re-adds the
  * column as nullable (data is not restored).
  */
-export class RemoveRoadmapStateCurrentStepId1749500300000
-  implements MigrationInterface
-{
+export class RemoveRoadmapStateCurrentStepId1749500300000 implements MigrationInterface {
   name = 'RemoveRoadmapStateCurrentStepId1749500300000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

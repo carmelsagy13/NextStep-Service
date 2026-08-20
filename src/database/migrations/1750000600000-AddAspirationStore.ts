@@ -119,12 +119,66 @@ export class AddAspirationStore1750000600000 implements MigrationInterface {
       attributeSchema: string | null;
       priority: number;
     }> = [
-      { code: 'car_purchase', labelHe: 'רכישת רכב', labelEn: 'Car purchase', category: 'short_term', supportsAmount: true, supportsTimeframe: true, attributeSchema: timeframeAttr, priority: 1 },
-      { code: 'wedding_event', labelHe: 'חתונה / אירוע משפחתי גדול', labelEn: 'Wedding / large family event', category: 'short_term', supportsAmount: true, supportsTimeframe: true, attributeSchema: timeframeAttr, priority: 2 },
-      { code: 'home_equity', labelHe: 'הון עצמי לדירה (לקניית נכס)', labelEn: 'Home equity (for buying property)', category: 'mid_term', supportsAmount: true, supportsTimeframe: true, attributeSchema: timeframeAttr, priority: 3 },
-      { code: 'big_trip_sabbatical', labelHe: 'טיול גדול בחו"ל / שנת שבתון', labelEn: 'Big trip abroad / sabbatical year', category: 'mid_term', supportsAmount: true, supportsTimeframe: true, attributeSchema: timeframeAttr, priority: 4 },
-      { code: 'safety_net', labelHe: 'יצירת רשת ביטחון ("כסף ליום סגריר") – ללא יעד ספציפי.', labelEn: 'Build a safety net ("rainy-day money") – no specific target.', category: 'long_term', supportsAmount: false, supportsTimeframe: false, attributeSchema: null, priority: 5 },
-      { code: 'early_retirement', labelHe: 'פרישה מוקדמת / עצמאות כלכלית מלאה (טווח ארוך).', labelEn: 'Early retirement / full financial independence (long term).', category: 'long_term', supportsAmount: false, supportsTimeframe: false, attributeSchema: null, priority: 6 },
+      {
+        code: 'car_purchase',
+        labelHe: 'רכישת רכב',
+        labelEn: 'Car purchase',
+        category: 'short_term',
+        supportsAmount: true,
+        supportsTimeframe: true,
+        attributeSchema: timeframeAttr,
+        priority: 1,
+      },
+      {
+        code: 'wedding_event',
+        labelHe: 'חתונה / אירוע משפחתי גדול',
+        labelEn: 'Wedding / large family event',
+        category: 'short_term',
+        supportsAmount: true,
+        supportsTimeframe: true,
+        attributeSchema: timeframeAttr,
+        priority: 2,
+      },
+      {
+        code: 'home_equity',
+        labelHe: 'הון עצמי לדירה (לקניית נכס)',
+        labelEn: 'Home equity (for buying property)',
+        category: 'mid_term',
+        supportsAmount: true,
+        supportsTimeframe: true,
+        attributeSchema: timeframeAttr,
+        priority: 3,
+      },
+      {
+        code: 'big_trip_sabbatical',
+        labelHe: 'טיול גדול בחו"ל / שנת שבתון',
+        labelEn: 'Big trip abroad / sabbatical year',
+        category: 'mid_term',
+        supportsAmount: true,
+        supportsTimeframe: true,
+        attributeSchema: timeframeAttr,
+        priority: 4,
+      },
+      {
+        code: 'safety_net',
+        labelHe: 'יצירת רשת ביטחון ("כסף ליום סגריר") – ללא יעד ספציפי.',
+        labelEn: 'Build a safety net ("rainy-day money") – no specific target.',
+        category: 'long_term',
+        supportsAmount: false,
+        supportsTimeframe: false,
+        attributeSchema: null,
+        priority: 5,
+      },
+      {
+        code: 'early_retirement',
+        labelHe: 'פרישה מוקדמת / עצמאות כלכלית מלאה (טווח ארוך).',
+        labelEn: 'Early retirement / full financial independence (long term).',
+        category: 'long_term',
+        supportsAmount: false,
+        supportsTimeframe: false,
+        attributeSchema: null,
+        priority: 6,
+      },
     ];
 
     for (const g of goalTypes) {
@@ -159,7 +213,9 @@ export class AddAspirationStore1750000600000 implements MigrationInterface {
         DROP COLUMN IF EXISTS "aspiration_id"
     `);
     await queryRunner.query(`DROP TABLE IF EXISTS "user_aspirations"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "user_aspirations_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "user_aspirations_status_enum"`,
+    );
     await queryRunner.query(`DROP TABLE IF EXISTS "goal_type_catalog"`);
   }
 }

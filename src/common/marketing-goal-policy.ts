@@ -1,4 +1,7 @@
-import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
+import {
+  RoadmapGoal,
+  RoadmapGoalType,
+} from '../database/entities/roadmap-goal.entity.js';
 import { PartnerOffer } from '../database/entities/partner-offer.entity.js';
 import { FinancialFeatures } from '../open-finance/financial-features.model.js';
 
@@ -24,7 +27,10 @@ export interface MarketingEligibilityContext {
 }
 
 /** Whether an offer is live today (active flag + validity window). */
-export function isOfferLive(offer: PartnerOffer | null | undefined, now = new Date()): boolean {
+export function isOfferLive(
+  offer: PartnerOffer | null | undefined,
+  now = new Date(),
+): boolean {
   if (!offer || !offer.isActive) return false;
   if (!offer.partner?.isActive) return false;
   if (offer.validFrom && new Date(offer.validFrom) > now) return false;
@@ -58,7 +64,8 @@ export function isMarketingGoalAllowed(
   if (goal.type !== RoadmapGoalType.MARKETING) return true;
 
   if (!isOfferLive(goal.offer)) return false;
-  if (context.activeMarketingGoalCount >= MAX_ACTIVE_MARKETING_GOALS) return false;
+  if (context.activeMarketingGoalCount >= MAX_ACTIVE_MARKETING_GOALS)
+    return false;
 
   // Never monetise a user who is struggling or still finding their footing.
   if (context.currentStep === null || context.currentStep < 2) return false;
@@ -81,8 +88,16 @@ export function isMarketingGoalAllowed(
 
   if (!targeting) return true;
 
-  if (targeting.minStep !== undefined && context.currentStep < targeting.minStep) return false;
-  if (targeting.maxStep !== undefined && context.currentStep > targeting.maxStep) return false;
+  if (
+    targeting.minStep !== undefined &&
+    context.currentStep < targeting.minStep
+  )
+    return false;
+  if (
+    targeting.maxStep !== undefined &&
+    context.currentStep > targeting.maxStep
+  )
+    return false;
 
   // Monetary thresholds are only meaningful against a real financial report.
   if (features) {
@@ -122,7 +137,9 @@ export function filterMarketingGoals<T>(
     const goal = resolve(candidate);
     if (!goal || goal.type !== RoadmapGoalType.MARKETING) return true;
     if (marketingBudget <= 0) return false;
-    if (!isMarketingGoalAllowed(goal, { ...context, activeMarketingGoalCount: 0 })) {
+    if (
+      !isMarketingGoalAllowed(goal, { ...context, activeMarketingGoalCount: 0 })
+    ) {
       return false;
     }
     marketingBudget -= 1;

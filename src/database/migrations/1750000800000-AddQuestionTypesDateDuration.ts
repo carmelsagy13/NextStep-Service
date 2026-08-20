@@ -15,9 +15,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *          no rows can reference it yet, the down migration intentionally does
  *          nothing (mirrors the repo's other additive/data migrations).
  */
-export class AddQuestionTypesDateDuration1750000800000
-  implements MigrationInterface
-{
+export class AddQuestionTypesDateDuration1750000800000 implements MigrationInterface {
   name = 'AddQuestionTypesDateDuration1750000800000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

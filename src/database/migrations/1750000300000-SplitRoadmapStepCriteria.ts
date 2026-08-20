@@ -17,9 +17,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `up`   : add the 8 columns (idempotent), then drop `criteria`.
  * `down` : re-add `criteria` (nullable; data NOT restored), drop the 8 columns.
  */
-export class SplitRoadmapStepCriteria1750000300000
-  implements MigrationInterface
-{
+export class SplitRoadmapStepCriteria1750000300000 implements MigrationInterface {
   name = 'SplitRoadmapStepCriteria1750000300000';
 
   private static readonly COLUMNS = [

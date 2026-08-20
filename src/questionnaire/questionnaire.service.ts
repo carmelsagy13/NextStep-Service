@@ -21,10 +21,7 @@ import {
 } from '../aspirations/aspirations.service.js';
 import { UserAspirationStatus } from '../database/entities/user-aspiration.entity.js';
 import { UserProfileService } from '../user-profile/user-profile.service.js';
-import {
-  computeRiskTolerance,
-  isRiskQuestionKey,
-} from './risk-tolerance.js';
+import { computeRiskTolerance, isRiskQuestionKey } from './risk-tolerance.js';
 
 /**
  * The overarching goals captured by the onboarding questionnaire are NO LONGER
@@ -86,7 +83,8 @@ export interface SerializedScreen {
 }
 
 /** A single answer projected for LLM/analytics consumption. */
-export interface QuestionnaireAnswerView {  questionKey: string;
+export interface QuestionnaireAnswerView {
+  questionKey: string;
   /** Hebrew question text. */
   question: string;
   /**
@@ -134,7 +132,7 @@ export function buildQuestionnairePromptSection(
     'that the connected bank data cannot see — e.g. accounts at other banks,',
     'non-bank credit cards, off-platform savings/pension (study funds, provident,',
     'pension), investment real-estate, loans taken outside the bank, large annual',
-    'expenses, and the user\'s own declared financial goals.',
+    "expenses, and the user's own declared financial goals.",
     'Use these answers to COMPLEMENT the bank-derived figures and refine your',
     'assessment where the bank data is blind. The connected bank data remains',
     'authoritative for on-platform balances and cash flow — do NOT double-count an',
@@ -163,7 +161,10 @@ export class QuestionnaireService {
   // ──────────────────────────────────────────────────────────────────────
   async getStructure(): Promise<{ screens: SerializedScreen[] }> {
     const [screens, questions] = await Promise.all([
-      this.screenRepo.find({ where: { isActive: true }, order: { orderIndex: 'ASC' } }),
+      this.screenRepo.find({
+        where: { isActive: true },
+        order: { orderIndex: 'ASC' },
+      }),
       this.questionRepo.find({
         where: { isActive: true },
         relations: { options: true, dependencies: true },
@@ -189,7 +190,9 @@ export class QuestionnaireService {
       }
     }
 
-    const serializeQuestion = (q: QuestionnaireQuestion): SerializedQuestion => ({
+    const serializeQuestion = (
+      q: QuestionnaireQuestion,
+    ): SerializedQuestion => ({
       questionKey: q.questionKey,
       type: q.type,
       isRequired: q.isRequired,
@@ -199,7 +202,11 @@ export class QuestionnaireService {
       options: (q.options ?? [])
         .filter((o) => o.isActive)
         .sort((a, b) => a.orderIndex - b.orderIndex)
-        .map((o) => ({ value: o.optionValue, label: o.label, orderIndex: o.orderIndex })),
+        .map((o) => ({
+          value: o.optionValue,
+          label: o.label,
+          orderIndex: o.orderIndex,
+        })),
       dependencies: (q.dependencies ?? [])
         .filter((d) => d.isActive)
         .sort((a, b) => a.groupIndex - b.groupIndex)
@@ -271,18 +278,23 @@ export class QuestionnaireService {
     for (const item of dto.answers) {
       const question = byKey.get(item.questionKey);
       if (!question) {
-        errors.push({ questionKey: item.questionKey, message: 'Unknown or inactive question.' });
+        errors.push({
+          questionKey: item.questionKey,
+          message: 'Unknown or inactive question.',
+        });
         continue;
       }
       if (!this.isVisible(question, byId, byKey, answers)) {
         errors.push({
           questionKey: item.questionKey,
-          message: 'Answer provided for a question that is not currently visible.',
+          message:
+            'Answer provided for a question that is not currently visible.',
         });
         continue;
       }
       const typeError = this.validateAnswerType(question, item.value);
-      if (typeError) errors.push({ questionKey: item.questionKey, message: typeError });
+      if (typeError)
+        errors.push({ questionKey: item.questionKey, message: typeError });
     }
 
     // 2) Enforce required-ness for every currently-visible question, evaluated
@@ -291,12 +303,18 @@ export class QuestionnaireService {
       if (!question.isRequired) continue;
       if (!this.isVisible(question, byId, byKey, answers)) continue;
       if (this.isEmpty(answers.get(question.questionKey))) {
-        errors.push({ questionKey: question.questionKey, message: 'This question is required.' });
+        errors.push({
+          questionKey: question.questionKey,
+          message: 'This question is required.',
+        });
       }
     }
 
     if (errors.length > 0) {
-      throw new BadRequestException({ message: 'Questionnaire validation failed', errors });
+      throw new BadRequestException({
+        message: 'Questionnaire validation failed',
+        errors,
+      });
     }
 
     // 3) Persist: reuse the user's latest submission so it always reflects the
@@ -420,7 +438,7 @@ export class QuestionnaireService {
     answers: Map<string, AnswerValue>,
   ): OnboardingGoalInput[] {
     const selected = answers.get(GOAL_PARENT_KEY);
-    const codes = Array.isArray(selected) ? (selected as string[]) : [];
+    const codes = Array.isArray(selected) ? selected : [];
     return codes.map((code) => {
       const prefix = GOAL_TYPE_TO_SUBFIELD_PREFIX[code];
       const amount = prefix ? answers.get(`${prefix}_amount`) : undefined;
@@ -432,7 +450,6 @@ export class QuestionnaireService {
       };
     });
   }
-
 
   // ──────────────────────────────────────────────────────────────────────
   // GET /questionnaire/responses — the user's saved answers, keyed by question
@@ -460,7 +477,10 @@ export class QuestionnaireService {
     const responses = rows
       .filter((r) => r.question)
       .sort((a, b) => a.question.orderIndex - b.question.orderIndex)
-      .map((r) => ({ questionKey: r.question.questionKey, value: r.answerValue }));
+      .map((r) => ({
+        questionKey: r.question.questionKey,
+        value: r.answerValue,
+      }));
 
     return { responses };
   }
@@ -526,7 +546,10 @@ export class QuestionnaireService {
     ) {
       return labelOf(value);
     }
-    if (question.type === QuestionType.MULTIPLE_CHOICE && Array.isArray(value)) {
+    if (
+      question.type === QuestionType.MULTIPLE_CHOICE &&
+      Array.isArray(value)
+    ) {
       return value.map(labelOf);
     }
     return value;
@@ -585,11 +608,17 @@ export class QuestionnaireService {
       case DependencyOperator.NOT_EQUALS:
         return answer !== rule.triggerValue;
       case DependencyOperator.INCLUDES:
-        return Array.isArray(answer) && answer.includes(rule.triggerValue as string);
+        return (
+          Array.isArray(answer) && answer.includes(rule.triggerValue as string)
+        );
       case DependencyOperator.GT:
-        return !this.isEmpty(answer) && Number(answer) > Number(rule.triggerValue);
+        return (
+          !this.isEmpty(answer) && Number(answer) > Number(rule.triggerValue)
+        );
       case DependencyOperator.LT:
-        return !this.isEmpty(answer) && Number(answer) < Number(rule.triggerValue);
+        return (
+          !this.isEmpty(answer) && Number(answer) < Number(rule.triggerValue)
+        );
       case DependencyOperator.EXISTS:
         return !this.isEmpty(answer);
       default:
@@ -606,24 +635,34 @@ export class QuestionnaireService {
   ): string | null {
     const v = question.validation ?? {};
     const optionValues = new Set(
-      (question.options ?? []).filter((o) => o.isActive).map((o) => o.optionValue),
+      (question.options ?? [])
+        .filter((o) => o.isActive)
+        .map((o) => o.optionValue),
     );
 
     switch (question.type) {
       case QuestionType.SINGLE_CHOICE: {
-        if (typeof value !== 'string') return 'Expected a single string choice.';
-        if (!optionValues.has(value)) return `"${value}" is not a valid option.`;
+        if (typeof value !== 'string')
+          return 'Expected a single string choice.';
+        if (!optionValues.has(value))
+          return `"${value}" is not a valid option.`;
         return null;
       }
       case QuestionType.MULTIPLE_CHOICE: {
         if (!Array.isArray(value)) return 'Expected an array of choices.';
-        if (!value.every((x) => typeof x === 'string')) return 'All choices must be strings.';
+        if (!value.every((x) => typeof x === 'string'))
+          return 'All choices must be strings.';
         const invalid = value.find((x) => !optionValues.has(x));
         if (invalid !== undefined) return `"${invalid}" is not a valid option.`;
-        if (new Set(value).size !== value.length) return 'Duplicate choices are not allowed.';
+        if (new Set(value).size !== value.length)
+          return 'Duplicate choices are not allowed.';
         // Count constraints only apply once at least one choice is made; an
         // empty selection is governed by the required-ness check instead.
-        if (value.length > 0 && v.minItems !== undefined && value.length < v.minItems) {
+        if (
+          value.length > 0 &&
+          v.minItems !== undefined &&
+          value.length < v.minItems
+        ) {
           return `Select at least ${v.minItems} option(s).`;
         }
         if (v.maxItems !== undefined && value.length > v.maxItems) {
@@ -637,8 +676,10 @@ export class QuestionnaireService {
           return 'Expected a number.';
         }
         if (Number.isNaN(num)) return 'Expected a number.';
-        if (v.min !== undefined && num < v.min) return `Must be at least ${v.min}.`;
-        if (v.max !== undefined && num > v.max) return `Must be at most ${v.max}.`;
+        if (v.min !== undefined && num < v.min)
+          return `Must be at least ${v.min}.`;
+        if (v.max !== undefined && num > v.max)
+          return `Must be at most ${v.max}.`;
         return null;
       }
       case QuestionType.TEXT: {

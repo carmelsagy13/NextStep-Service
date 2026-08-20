@@ -23,16 +23,19 @@ export class GoalsController {
 
   @Get('recommended')
   @ApiOperation({
-    summary: 'Get recommended roadmap goals for the user\'s current step',
+    summary: "Get recommended roadmap goals for the user's current step",
     description:
-      'Returns only roadmap_goals whose step_id exactly matches the user\'s current_step, sorted by priority ASC. Goals from other steps are never returned.',
+      "Returns only roadmap_goals whose step_id exactly matches the user's current_step, sorted by priority ASC. Goals from other steps are never returned.",
   })
   getRecommendedGoals(@CurrentUser() user: { userId: string }) {
     return this.goalsService.getRecommendedGoals(user.userId);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get user goals with progress, optionally filtered by lifecycle status' })
+  @ApiOperation({
+    summary:
+      'Get user goals with progress, optionally filtered by lifecycle status',
+  })
   @ApiQuery({ name: 'status', required: false, enum: UserGoalStatus })
   @ApiOkResponse({
     type: [GoalResponseDto],
@@ -51,15 +54,21 @@ export class GoalsController {
   @ApiOperation({
     summary: 'Create a new goal',
     description:
-      'If roadmapGoalId is provided, the referenced roadmap_goal must belong to the user\'s current step (enforced by StepIsolationGuard).',
+      "If roadmapGoalId is provided, the referenced roadmap_goal must belong to the user's current step (enforced by StepIsolationGuard).",
   })
   createGoal(@CurrentUser() user: { userId: string }, @Body() body: any) {
     return this.goalsService.createGoal(user.userId, body);
   }
 
   @Post('update')
-  @ApiOperation({ summary: 'Update currentAmount and/or lifecycle status for a goal (optimistic UI support)' })
-  updateGoal(@CurrentUser() user: { userId: string }, @Body() dto: UpdateGoalDto) {
+  @ApiOperation({
+    summary:
+      'Update currentAmount and/or lifecycle status for a goal (optimistic UI support)',
+  })
+  updateGoal(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: UpdateGoalDto,
+  ) {
     return this.goalsService.updateGoal(user.userId, dto);
   }
 

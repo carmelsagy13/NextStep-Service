@@ -8,7 +8,10 @@ export { FinancialEvent } from './financial-event.entity.js';
 export { UserGoal, UserGoalStatus } from './user-goal.entity.js';
 export { GoalTypeCatalog } from './goal-type-catalog.entity.js';
 export type { GoalAttributeSpec } from './goal-type-catalog.entity.js';
-export { UserAspiration, UserAspirationStatus } from './user-aspiration.entity.js';
+export {
+  UserAspiration,
+  UserAspirationStatus,
+} from './user-aspiration.entity.js';
 export { RoadmapStep } from './roadmap-step.entity.js';
 export { RoadmapState } from './roadmap-state.entity.js';
 export { LlmGuidanceLog } from './llm-guidance-log.entity.js';

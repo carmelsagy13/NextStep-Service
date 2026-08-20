@@ -21,7 +21,9 @@ import { DemoModule } from '../demo/demo.module.js';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET', 'default-secret'),
-        signOptions: { expiresIn: config.get<string>('JWT_EXPIRATION', '1d') as any },
+        signOptions: {
+          expiresIn: config.get<string>('JWT_EXPIRATION', '1d') as any,
+        },
       }),
     }),
   ],

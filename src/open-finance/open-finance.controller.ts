@@ -1,10 +1,25 @@
 import {
-  Controller, Post, Get, Delete, Body, Query,
-  UseGuards, UseInterceptors, UploadedFile,
-  BadRequestException, HttpCode, HttpStatus,
+  Controller,
+  Post,
+  Get,
+  Delete,
+  Body,
+  Query,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { OpenFinanceService } from './open-finance.service.js';
 import { OpenFinanceApiService } from './open-finance-api.service.js';
@@ -48,7 +63,9 @@ export class OpenFinanceController {
   @Post('upload')
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
-  @ApiOperation({ summary: 'Upload Open Banking JSON and classify financial stage via Gemini' })
+  @ApiOperation({
+    summary: 'Upload Open Banking JSON and classify financial stage via Gemini',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -61,8 +78,14 @@ export class OpenFinanceController {
     FileInterceptor('file', {
       limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
       fileFilter: (_req, file, cb) => {
-        if (!file.originalname.endsWith('.json') && file.mimetype !== 'application/json') {
-          return cb(new BadRequestException('Only JSON files are accepted'), false);
+        if (
+          !file.originalname.endsWith('.json') &&
+          file.mimetype !== 'application/json'
+        ) {
+          return cb(
+            new BadRequestException('Only JSON files are accepted'),
+            false,
+          );
         }
         cb(null, true);
       },
@@ -73,7 +96,7 @@ export class OpenFinanceController {
     @CurrentUser() user: { userId: string },
   ) {
     if (!file) {
-      throw new BadRequestException('No file uploaded — use field name \'file\'');
+      throw new BadRequestException("No file uploaded — use field name 'file'");
     }
     return this.openFinanceService.analyzeFile(file.buffer, user.userId);
   }
@@ -88,7 +111,8 @@ export class OpenFinanceController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
   @ApiOperation({
-    summary: 'Fetch financial data via the Open Finance API and persist it through the existing analysis pipeline',
+    summary:
+      'Fetch financial data via the Open Finance API and persist it through the existing analysis pipeline',
   })
   connectApi(@CurrentUser() user: { userId: string }) {
     return this.openFinanceApiService.connectAndAnalyze(user.userId);
@@ -103,7 +127,10 @@ export class OpenFinanceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'))
-  @ApiOperation({ summary: 'Reset all financial data for the authenticated user (goals, profile, roadmap state)' })
+  @ApiOperation({
+    summary:
+      'Reset all financial data for the authenticated user (goals, profile, roadmap state)',
+  })
   resetAccount(@CurrentUser() user: { userId: string }) {
     return this.openFinanceService.resetUserData(user.userId);
   }

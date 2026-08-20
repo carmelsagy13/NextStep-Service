@@ -19,7 +19,16 @@ import { QuestionnaireModule } from '../questionnaire/questionnaire.module.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BankConsent, BankToken, RoadmapStep, RoadmapGoal, UserProfile, UserProfileHistory, UserAspiration, User]),
+    TypeOrmModule.forFeature([
+      BankConsent,
+      BankToken,
+      RoadmapStep,
+      RoadmapGoal,
+      UserProfile,
+      UserProfileHistory,
+      UserAspiration,
+      User,
+    ]),
     // Store uploaded files in memory so we can access file.buffer in the service.
     MulterModule.register({ storage: memoryStorage() }),
     FinancialAnalysisModule,

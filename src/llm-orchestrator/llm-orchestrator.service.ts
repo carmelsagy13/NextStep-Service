@@ -1,9 +1,16 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmGuidanceLog } from '../database/entities/llm-guidance-log.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
-import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
+import {
+  RoadmapGoal,
+  RoadmapGoalType,
+} from '../database/entities/roadmap-goal.entity.js';
 import { filterMarketingGoals } from '../common/marketing-goal-policy.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import {
@@ -229,7 +236,9 @@ export class LlmOrchestratorService {
     const dropped = recommendations.length - safe.length;
 
     const result = safe.map((r: any) => {
-      const template = candidateGoals.find((g) => g.goalId === r.roadmap_goal_id);
+      const template = candidateGoals.find(
+        (g) => g.goalId === r.roadmap_goal_id,
+      );
       return {
         roadmap_goal_id: r.roadmap_goal_id,
         title: r.title ?? template?.title ?? '',
@@ -240,7 +249,12 @@ export class LlmOrchestratorService {
       };
     });
 
-    await this.persistGuidanceLog(profile, candidateGoals, result, questionnaire);
+    await this.persistGuidanceLog(
+      profile,
+      candidateGoals,
+      result,
+      questionnaire,
+    );
 
     return result;
   }

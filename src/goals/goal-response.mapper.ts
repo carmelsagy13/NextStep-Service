@@ -24,7 +24,10 @@ function toSafeExternalUrl(url: string | null | undefined): string | null {
   }
 }
 
-function toAssetUrl(path: string | null | undefined, baseUrl: string): string | null {
+function toAssetUrl(
+  path: string | null | undefined,
+  baseUrl: string,
+): string | null {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return toSafeExternalUrl(path);
   return `${baseUrl}/${path.replace(/^\/+/, '')}`;
@@ -62,7 +65,10 @@ function buildMarketingMeta(
   };
 }
 
-export function toGoalResponse(goal: UserGoal, assetBaseUrl: string): GoalResponseDto {
+export function toGoalResponse(
+  goal: UserGoal,
+  assetBaseUrl: string,
+): GoalResponseDto {
   const template = goal.roadmapGoal ?? null;
   const marketing = buildMarketingMeta(template?.offer, assetBaseUrl);
 
@@ -83,7 +89,9 @@ export function toGoalResponse(goal: UserGoal, assetBaseUrl: string): GoalRespon
     status: goal.status,
     priority: goal.priority,
     assignedAt: goal.assignedAt ?? null,
+    assignedAtStep: goal.assignedAtStep ?? null,
     completedAt: goal.completedAt ?? null,
+    completedAtStep: goal.completedAtStep ?? null,
     removedAt: goal.removedAt ?? null,
     removalReason: goal.removalReason ?? null,
     sourceProfileHistoryId: goal.sourceProfileHistoryId ?? null,
@@ -108,7 +116,10 @@ export function toGoalResponse(goal: UserGoal, assetBaseUrl: string): GoalRespon
   };
 }
 
-export function toGoalResponseList(goals: UserGoal[], assetBaseUrl: string): GoalResponseDto[] {
+export function toGoalResponseList(
+  goals: UserGoal[],
+  assetBaseUrl: string,
+): GoalResponseDto[] {
   return goals.map((goal) => toGoalResponse(goal, assetBaseUrl));
 }
 

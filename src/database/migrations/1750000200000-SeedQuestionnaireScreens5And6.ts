@@ -33,9 +33,21 @@ interface SeedSubField {
 }
 
 const EXPENSE_OPTIONS: SeedOption[] = [
-  { value: 'car_test_insurance', label: { he: 'טסט וביטוחים לרכב', en: 'Vehicle test & insurance' } },
-  { value: 'periodic_maintenance', label: { he: 'טיפול תקופתי / תיקונים מתוכננים', en: 'Periodic service / planned repairs' } },
-  { value: 'annual_vacation', label: { he: 'חופשה שנתית קבועה', en: 'Regular annual vacation' } },
+  {
+    value: 'car_test_insurance',
+    label: { he: 'טסט וביטוחים לרכב', en: 'Vehicle test & insurance' },
+  },
+  {
+    value: 'periodic_maintenance',
+    label: {
+      he: 'טיפול תקופתי / תיקונים מתוכננים',
+      en: 'Periodic service / planned repairs',
+    },
+  },
+  {
+    value: 'annual_vacation',
+    label: { he: 'חופשה שנתית קבועה', en: 'Regular annual vacation' },
+  },
   { value: 'other', label: { he: 'אחר', en: 'Other' } },
 ];
 
@@ -43,51 +55,150 @@ const EXPENSE_OPTIONS: SeedOption[] = [
 const EXPENSE_SUBFIELDS: SeedSubField[] = [
   {
     key: 'q_expense_car_amount',
-    text: { he: 'עלות שנתית מוערכת – טסט וביטוחים לרכב (בש"ח)', en: 'Estimated annual cost – vehicle test & insurance (NIS)' },
+    text: {
+      he: 'עלות שנתית מוערכת – טסט וביטוחים לרכב (בש"ח)',
+      en: 'Estimated annual cost – vehicle test & insurance (NIS)',
+    },
     triggerOption: 'car_test_insurance',
   },
   {
     key: 'q_expense_maintenance_amount',
-    text: { he: 'עלות שנתית מוערכת – טיפול תקופתי / תיקונים (בש"ח)', en: 'Estimated annual cost – periodic service / repairs (NIS)' },
+    text: {
+      he: 'עלות שנתית מוערכת – טיפול תקופתי / תיקונים (בש"ח)',
+      en: 'Estimated annual cost – periodic service / repairs (NIS)',
+    },
     triggerOption: 'periodic_maintenance',
   },
   {
     key: 'q_expense_vacation_amount',
-    text: { he: 'עלות שנתית מוערכת – חופשה שנתית קבועה (בש"ח)', en: 'Estimated annual cost – regular annual vacation (NIS)' },
+    text: {
+      he: 'עלות שנתית מוערכת – חופשה שנתית קבועה (בש"ח)',
+      en: 'Estimated annual cost – regular annual vacation (NIS)',
+    },
     triggerOption: 'annual_vacation',
   },
 ];
 
 const GOAL_OPTIONS: SeedOption[] = [
   { value: 'car_purchase', label: { he: 'רכישת רכב', en: 'Car purchase' } },
-  { value: 'wedding_event', label: { he: 'חתונה / אירוע משפחתי גדול', en: 'Wedding / large family event' } },
-  { value: 'home_equity', label: { he: 'הון עצמי לדירה (לקניית נכס)', en: 'Home equity (for buying property)' } },
-  { value: 'big_trip_sabbatical', label: { he: 'טיול גדול בחו"ל / שנת שבתון', en: 'Big trip abroad / sabbatical year' } },
-  { value: 'safety_net', label: { he: 'יצירת רשת ביטחון ("כסף ליום סגריר") – ללא יעד ספציפי.', en: 'Build a safety net ("rainy-day money") – no specific target.' } },
-  { value: 'early_retirement', label: { he: 'פרישה מוקדמת / עצמאות כלכלית מלאה (טווח ארוך).', en: 'Early retirement / full financial independence (long term).' } },
+  {
+    value: 'wedding_event',
+    label: {
+      he: 'חתונה / אירוע משפחתי גדול',
+      en: 'Wedding / large family event',
+    },
+  },
+  {
+    value: 'home_equity',
+    label: {
+      he: 'הון עצמי לדירה (לקניית נכס)',
+      en: 'Home equity (for buying property)',
+    },
+  },
+  {
+    value: 'big_trip_sabbatical',
+    label: {
+      he: 'טיול גדול בחו"ל / שנת שבתון',
+      en: 'Big trip abroad / sabbatical year',
+    },
+  },
+  {
+    value: 'safety_net',
+    label: {
+      he: 'יצירת רשת ביטחון ("כסף ליום סגריר") – ללא יעד ספציפי.',
+      en: 'Build a safety net ("rainy-day money") – no specific target.',
+    },
+  },
+  {
+    value: 'early_retirement',
+    label: {
+      he: 'פרישה מוקדמת / עצמאות כלכלית מלאה (טווח ארוך).',
+      en: 'Early retirement / full financial independence (long term).',
+    },
+  },
 ];
 
 // Per-goal timeframe (months) + requested amount, for goals carrying a target.
-const GOAL_SUBFIELDS: Array<{ goal: string; timeframe: SeedSubField; amount: SeedSubField }> = [
+const GOAL_SUBFIELDS: Array<{
+  goal: string;
+  timeframe: SeedSubField;
+  amount: SeedSubField;
+}> = [
   {
     goal: 'car_purchase',
-    timeframe: { key: 'q_goal_car_timeframe', text: { he: 'רכישת רכב – טווח זמן (בחודשים)', en: 'Car purchase – timeframe (months)' }, triggerOption: 'car_purchase' },
-    amount: { key: 'q_goal_car_amount', text: { he: 'רכישת רכב – סכום מבוקש (בש"ח)', en: 'Car purchase – requested amount (NIS)' }, triggerOption: 'car_purchase' },
+    timeframe: {
+      key: 'q_goal_car_timeframe',
+      text: {
+        he: 'רכישת רכב – טווח זמן (בחודשים)',
+        en: 'Car purchase – timeframe (months)',
+      },
+      triggerOption: 'car_purchase',
+    },
+    amount: {
+      key: 'q_goal_car_amount',
+      text: {
+        he: 'רכישת רכב – סכום מבוקש (בש"ח)',
+        en: 'Car purchase – requested amount (NIS)',
+      },
+      triggerOption: 'car_purchase',
+    },
   },
   {
     goal: 'wedding_event',
-    timeframe: { key: 'q_goal_wedding_timeframe', text: { he: 'חתונה / אירוע – טווח זמן (בחודשים)', en: 'Wedding / event – timeframe (months)' }, triggerOption: 'wedding_event' },
-    amount: { key: 'q_goal_wedding_amount', text: { he: 'חתונה / אירוע – סכום מבוקש (בש"ח)', en: 'Wedding / event – requested amount (NIS)' }, triggerOption: 'wedding_event' },
+    timeframe: {
+      key: 'q_goal_wedding_timeframe',
+      text: {
+        he: 'חתונה / אירוע – טווח זמן (בחודשים)',
+        en: 'Wedding / event – timeframe (months)',
+      },
+      triggerOption: 'wedding_event',
+    },
+    amount: {
+      key: 'q_goal_wedding_amount',
+      text: {
+        he: 'חתונה / אירוע – סכום מבוקש (בש"ח)',
+        en: 'Wedding / event – requested amount (NIS)',
+      },
+      triggerOption: 'wedding_event',
+    },
   },
   {
     goal: 'home_equity',
-    timeframe: { key: 'q_goal_home_timeframe', text: { he: 'הון עצמי לדירה – טווח זמן (בחודשים)', en: 'Home equity – timeframe (months)' }, triggerOption: 'home_equity' },
-    amount: { key: 'q_goal_home_amount', text: { he: 'הון עצמי לדירה – סכום מבוקש (בש"ח)', en: 'Home equity – requested amount (NIS)' }, triggerOption: 'home_equity' },
+    timeframe: {
+      key: 'q_goal_home_timeframe',
+      text: {
+        he: 'הון עצמי לדירה – טווח זמן (בחודשים)',
+        en: 'Home equity – timeframe (months)',
+      },
+      triggerOption: 'home_equity',
+    },
+    amount: {
+      key: 'q_goal_home_amount',
+      text: {
+        he: 'הון עצמי לדירה – סכום מבוקש (בש"ח)',
+        en: 'Home equity – requested amount (NIS)',
+      },
+      triggerOption: 'home_equity',
+    },
   },
   {
     goal: 'big_trip_sabbatical',
-    timeframe: { key: 'q_goal_trip_timeframe', text: { he: 'טיול גדול / שנת שבתון – טווח זמן (בחודשים)', en: 'Big trip / sabbatical – timeframe (months)' }, triggerOption: 'big_trip_sabbatical' },
-    amount: { key: 'q_goal_trip_amount', text: { he: 'טיול גדול / שנת שבתון – סכום מבוקש (בש"ח)', en: 'Big trip / sabbatical – requested amount (NIS)' }, triggerOption: 'big_trip_sabbatical' },
+    timeframe: {
+      key: 'q_goal_trip_timeframe',
+      text: {
+        he: 'טיול גדול / שנת שבתון – טווח זמן (בחודשים)',
+        en: 'Big trip / sabbatical – timeframe (months)',
+      },
+      triggerOption: 'big_trip_sabbatical',
+    },
+    amount: {
+      key: 'q_goal_trip_amount',
+      text: {
+        he: 'טיול גדול / שנת שבתון – סכום מבוקש (בש"ח)',
+        en: 'Big trip / sabbatical – requested amount (NIS)',
+      },
+      triggerOption: 'big_trip_sabbatical',
+    },
   },
 ];
 
@@ -96,9 +207,7 @@ const ALL_SUBFIELD_KEYS = [
   ...GOAL_SUBFIELDS.flatMap((g) => [g.timeframe.key, g.amount.key]),
 ];
 
-export class SeedQuestionnaireScreens5And61750000200000
-  implements MigrationInterface
-{
+export class SeedQuestionnaireScreens5And61750000200000 implements MigrationInterface {
   name = 'SeedQuestionnaireScreens5And61750000200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -151,9 +260,10 @@ export class SeedQuestionnaireScreens5And61750000200000
 
     // ── Screen 5: complete the placeholder question ────────────────────────
     const expenseQId = await questionId('q_annual_expenses_prep');
-    const expenseScreenRows: Array<{ screen_id: string }> = await queryRunner.query(
-      `SELECT screen_id FROM questionnaire_questions WHERE question_key = 'q_annual_expenses_prep'`,
-    );
+    const expenseScreenRows: Array<{ screen_id: string }> =
+      await queryRunner.query(
+        `SELECT screen_id FROM questionnaire_questions WHERE question_key = 'q_annual_expenses_prep'`,
+      );
     const expenseScreenId = expenseScreenRows[0].screen_id;
 
     await queryRunner.query(
@@ -175,7 +285,12 @@ export class SeedQuestionnaireScreens5And61750000200000
       await addOption(expenseQId, EXPENSE_OPTIONS[i], i);
     }
     for (let i = 0; i < EXPENSE_SUBFIELDS.length; i++) {
-      await addNumberSubField(EXPENSE_SUBFIELDS[i], expenseScreenId, expenseQId, i);
+      await addNumberSubField(
+        EXPENSE_SUBFIELDS[i],
+        expenseScreenId,
+        expenseQId,
+        i,
+      );
     }
 
     // ── Screen 6: Goals ────────────────────────────────────────────────────
@@ -185,9 +300,10 @@ export class SeedQuestionnaireScreens5And61750000200000
        ON CONFLICT (screen_key) DO NOTHING`,
       [JSON.stringify({ he: 'מטרות', en: 'Goals' })],
     );
-    const goalScreenRows: Array<{ screen_id: string }> = await queryRunner.query(
-      `SELECT screen_id FROM questionnaire_screens WHERE screen_key = 'screen_goals'`,
-    );
+    const goalScreenRows: Array<{ screen_id: string }> =
+      await queryRunner.query(
+        `SELECT screen_id FROM questionnaire_screens WHERE screen_key = 'screen_goals'`,
+      );
     const goalScreenId = goalScreenRows[0].screen_id;
 
     await queryRunner.query(

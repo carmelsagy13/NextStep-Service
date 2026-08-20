@@ -5,8 +5,11 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { UserGoal, UserGoalStatus } from '../database/entities/user-goal.entity.js';
+import { DeepPartial, Repository } from 'typeorm';
+import {
+  UserGoal,
+  UserGoalStatus,
+} from '../database/entities/user-goal.entity.js';
 import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
@@ -21,6 +24,23 @@ import {
   PersonalizedGoalRecommendation,
 } from '../llm-orchestrator/llm-orchestrator.service.js';
 import { QuestionnaireService } from '../questionnaire/questionnaire.service.js';
+
+/**
+ * Fields the server owns exclusively. Stripped from POST /goals bodies so a
+ * caller cannot self-assign a lifecycle state or forge step attribution.
+ */
+const SERVER_OWNED_GOAL_FIELDS = [
+  'userId',
+  'goalId',
+  'status',
+  'assignedAt',
+  'assignedAtStep',
+  'completedAt',
+  'completedAtStep',
+  'removedAt',
+  'removalReason',
+  'sourceProfileHistoryId',
+] as const;
 
 @Injectable()
 export class GoalsService {
@@ -48,11 +68,15 @@ export class GoalsService {
    *   The full goal list is sent to the LLM, which reorders it by relevance and
    *   adds Hebrew insight text.
    */
-  async getRecommendedGoals(userId: string): Promise<PersonalizedGoalRecommendation[]> {
+  async getRecommendedGoals(
+    userId: string,
+  ): Promise<PersonalizedGoalRecommendation[]> {
     const profile = await this.userProfileRepo.findOne({ where: { userId } });
     if (!profile) throw new NotFoundException('User profile not found');
     if (profile.currentStep === null || profile.currentStep === undefined) {
-      throw new BadRequestException('User has no current step assigned. Complete the financial analysis first.');
+      throw new BadRequestException(
+        'User has no current step assigned. Complete the financial analysis first.',
+      );
     }
 
     // The user's latest questionnaire answers (off-platform context) sharpen the
@@ -73,20 +97,30 @@ export class GoalsService {
     }
 
     // ── Step 2: Personalization ────────────────────────────────────────────
-    const result = await this.llmOrchestrator.personalizeGoals(profile, allActiveGoals, questionnaire);
+    const result = await this.llmOrchestrator.personalizeGoals(
+      profile,
+      allActiveGoals,
+      questionnaire,
+    );
     return result;
   }
 
-  private async resolveCurrentStep(userId: string): Promise<number> {
+  /**
+   * The user's current roadmap step, or null when no analysis has assigned one.
+   * Deliberately non-throwing: step attribution is metadata, so a user without a
+   * step must still be able to create and complete tasks.
+   */
+  private async resolveCurrentStepOrNull(
+    userId: string,
+  ): Promise<number | null> {
     const profile = await this.userProfileRepo.findOne({ where: { userId } });
-    if (!profile) throw new NotFoundException('User profile not found');
-    if (profile.currentStep === null || profile.currentStep === undefined) {
-      throw new BadRequestException('User has no current step assigned');
-    }
-    return profile.currentStep;
+    return profile?.currentStep ?? null;
   }
 
-  async getGoals(userId: string, status?: UserGoalStatus): Promise<GoalResponseDto[]> {
+  async getGoals(
+    userId: string,
+    status?: UserGoalStatus,
+  ): Promise<GoalResponseDto[]> {
     const where = status ? { userId, status } : { userId };
     const goals = await this.goalRepo.find({
       where,
@@ -101,30 +135,48 @@ export class GoalsService {
   }
 
   async createGoal(userId: string, body: any) {
+    const input = (body ?? {}) as Record<string, unknown>;
+
     // Validate the referenced roadmap goal exists when provided. The stage/
     // eligibility limit has been removed, so any existing goal may be assigned.
-    if (body.roadmapGoalId) {
+    if (input.roadmapGoalId) {
       const roadmapGoal = await this.roadmapGoalRepo.findOne({
-        where: { goalId: body.roadmapGoalId },
+        where: { goalId: input.roadmapGoalId as string },
       });
       if (!roadmapGoal) throw new NotFoundException('Roadmap goal not found');
     }
 
-    const goal = this.goalRepo.create({ userId, ...body });
+    const fields: Record<string, unknown> = { ...input };
+    for (const key of SERVER_OWNED_GOAL_FIELDS) delete fields[key];
+
+    const goal = this.goalRepo.create({
+      ...fields,
+      userId,
+      assignedAtStep: await this.resolveCurrentStepOrNull(userId),
+    } as DeepPartial<UserGoal>);
     return this.goalRepo.save(goal);
   }
 
   async updateGoal(userId: string, dto: UpdateGoalDto) {
-    const goal = await this.goalRepo.findOne({ where: { goalId: dto.goalId, userId } });
+    const goal = await this.goalRepo.findOne({
+      where: { goalId: dto.goalId, userId },
+    });
 
-    if (!goal) throw new NotFoundException('Goal not found or does not belong to this user');
+    if (!goal)
+      throw new NotFoundException(
+        'Goal not found or does not belong to this user',
+      );
 
     // Only update the explicitly allowed fields to respect the goal's original structure
     if (dto.currentAmount !== undefined) {
       goal.currentAmount = dto.currentAmount;
     }
     if (dto.status !== undefined) {
-      this.applyStatusTransition(goal, dto.status);
+      this.applyStatusTransition(
+        goal,
+        dto.status,
+        await this.resolveCurrentStepOrNull(userId),
+      );
     }
 
     return this.goalRepo.save(goal);
@@ -134,9 +186,23 @@ export class GoalsService {
    * Applies a lifecycle status change and keeps the associated timestamps
    * consistent. Centralized so every status mutation records when it happened.
    */
-  private applyStatusTransition(goal: UserGoal, status: UserGoalStatus): void {
+  private applyStatusTransition(
+    goal: UserGoal,
+    status: UserGoalStatus,
+    currentStep: number | null,
+  ): void {
+    const completed = status === UserGoalStatus.COMPLETED;
+    const alreadyCompleted = goal.status === UserGoalStatus.COMPLETED;
     goal.status = status;
-    goal.completedAt = status === UserGoalStatus.COMPLETED ? new Date() : null;
+    // Completion is stamped once. Re-sending `completed` for an already finished
+    // task keeps the original step/time; only a real transition records new ones.
+    if (!completed) {
+      goal.completedAt = null;
+      goal.completedAtStep = null;
+    } else if (!alreadyCompleted) {
+      goal.completedAt = new Date();
+      goal.completedAtStep = currentStep;
+    }
     goal.removedAt =
       status === UserGoalStatus.REMOVED ||
       status === UserGoalStatus.ABANDONED ||

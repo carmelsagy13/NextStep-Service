@@ -14,9 +14,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * questionnaire CONTENT (screens, questions, options, rules) is editable via
  * plain row operations — no further migrations are required to evolve the form.
  */
-export class CreateQuestionnaireSchema1750000000000
-  implements MigrationInterface
-{
+export class CreateQuestionnaireSchema1750000000000 implements MigrationInterface {
   name = 'CreateQuestionnaireSchema1750000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -192,7 +190,9 @@ export class CreateQuestionnaireSchema1750000000000
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP TABLE IF EXISTS "questionnaire_responses"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "questionnaire_submissions"`);
-    await queryRunner.query(`DROP TABLE IF EXISTS "questionnaire_dependencies"`);
+    await queryRunner.query(
+      `DROP TABLE IF EXISTS "questionnaire_dependencies"`,
+    );
     await queryRunner.query(`DROP TABLE IF EXISTS "questionnaire_options"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "questionnaire_questions"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "questionnaire_screens"`);

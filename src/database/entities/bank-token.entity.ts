@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToOne,
+  JoinColumn,
+} from 'typeorm';
 import { BankConsent } from './bank-consent.entity.js';
 
 @Entity('bank_tokens')

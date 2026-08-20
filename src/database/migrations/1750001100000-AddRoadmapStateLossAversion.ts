@@ -9,9 +9,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `up`   : add `loss_aversion` (idempotent).
  * `down` : drop `loss_aversion`.
  */
-export class AddRoadmapStateLossAversion1750001100000
-  implements MigrationInterface
-{
+export class AddRoadmapStateLossAversion1750001100000 implements MigrationInterface {
   name = 'AddRoadmapStateLossAversion1750001100000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

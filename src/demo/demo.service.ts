@@ -74,7 +74,10 @@ export class DemoService {
         `[Demo] LOGIN full pipeline for userId=${userId} from local file "${dataPath}".`,
       );
       const bankingData = await this.loadDemoData(dataPath);
-      const full = await this.openFinance.analyzeBankingJson(bankingData, userId);
+      const full = await this.openFinance.analyzeBankingJson(
+        bankingData,
+        userId,
+      );
       return { mode: 'full', source: 'file', full };
     }
 
@@ -118,7 +121,9 @@ export class DemoService {
       raw = await readFile(absolutePath, 'utf-8');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`[Demo] Could not read demo data file at "${absolutePath}": ${msg}`);
+      this.logger.error(
+        `[Demo] Could not read demo data file at "${absolutePath}": ${msg}`,
+      );
       throw new InternalServerErrorException(
         `Demo data file not found. Check DEMO_DATA_PATH (resolved: "${absolutePath}").`,
       );

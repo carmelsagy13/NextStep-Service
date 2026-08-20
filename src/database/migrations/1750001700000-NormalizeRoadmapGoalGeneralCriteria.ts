@@ -13,9 +13,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `down` : drop the constraint FIRST (it would reject 'general'), then restore
  *          the exact 14 rows by id so genuinely-NULL goals are left untouched.
  */
-export class NormalizeRoadmapGoalGeneralCriteria1750001700000
-  implements MigrationInterface
-{
+export class NormalizeRoadmapGoalGeneralCriteria1750001700000 implements MigrationInterface {
   name = 'NormalizeRoadmapGoalGeneralCriteria1750001700000';
 
   /** The rows that held 'general' when this migration was written. */

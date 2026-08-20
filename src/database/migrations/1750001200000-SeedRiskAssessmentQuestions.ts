@@ -125,9 +125,7 @@ const RISK_QUESTIONS: SeedQuestion[] = [
   },
 ];
 
-export class SeedRiskAssessmentQuestions1750001200000
-  implements MigrationInterface
-{
+export class SeedRiskAssessmentQuestions1750001200000 implements MigrationInterface {
   name = 'SeedRiskAssessmentQuestions1750001200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

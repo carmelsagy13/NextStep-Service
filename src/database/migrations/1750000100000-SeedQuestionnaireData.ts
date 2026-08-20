@@ -60,13 +60,19 @@ const SEED: SeedScreen[] = [
     questions: [
       {
         key: 'q_family_status',
-        text: { he: 'מה המצב המשפחתי שלך כיום?', en: 'What is your current family status?' },
+        text: {
+          he: 'מה המצב המשפחתי שלך כיום?',
+          en: 'What is your current family status?',
+        },
         type: 'SINGLE_CHOICE',
         options: [
           { value: 'single', label: { he: 'רווק/ה', en: 'Single' } },
           {
             value: 'in_relationship_married',
-            label: { he: 'בזוגיות / נשוי/ה', en: 'In a relationship / Married' },
+            label: {
+              he: 'בזוגיות / נשוי/ה',
+              en: 'In a relationship / Married',
+            },
           },
           {
             value: 'divorced_widowed',
@@ -88,14 +94,31 @@ const SEED: SeedScreen[] = [
         text: { he: 'כמה ילדים?', en: 'How many children?' },
         type: 'NUMBER',
         parentKey: 'q_has_children',
-        dependencies: [{ triggerKey: 'q_has_children', operator: 'EQUALS', value: 'yes', group: 0 }],
+        dependencies: [
+          {
+            triggerKey: 'q_has_children',
+            operator: 'EQUALS',
+            value: 'yes',
+            group: 0,
+          },
+        ],
       },
       {
         key: 'q_youngest_child_age',
-        text: { he: 'מה גיל הילד הצעיר ביותר?', en: 'What is the age of the youngest child?' },
+        text: {
+          he: 'מה גיל הילד הצעיר ביותר?',
+          en: 'What is the age of the youngest child?',
+        },
         type: 'NUMBER',
         parentKey: 'q_has_children',
-        dependencies: [{ triggerKey: 'q_has_children', operator: 'EQUALS', value: 'yes', group: 0 }],
+        dependencies: [
+          {
+            triggerKey: 'q_has_children',
+            operator: 'EQUALS',
+            value: 'yes',
+            group: 0,
+          },
+        ],
       },
       {
         key: 'q_shared_bank_account',
@@ -107,7 +130,10 @@ const SEED: SeedScreen[] = [
         options: [
           {
             value: 'no_central_only',
-            label: { he: 'לא, זה החשבון המרכזי היחיד שלנו.', en: 'No, this is our only central account.' },
+            label: {
+              he: 'לא, זה החשבון המרכזי היחיד שלנו.',
+              en: 'No, this is our only central account.',
+            },
           },
           {
             value: 'yes_other_bank',
@@ -139,11 +165,17 @@ const SEED: SeedScreen[] = [
         options: [
           {
             value: 'no',
-            label: { he: 'לא, אני מנהל/ת את כל העו"ש שלי בבנק שחובק.', en: 'No, I manage all my checking at the connected bank.' },
+            label: {
+              he: 'לא, אני מנהל/ת את כל העו"ש שלי בבנק שחובק.',
+              en: 'No, I manage all my checking at the connected bank.',
+            },
           },
           {
             value: 'yes',
-            label: { he: 'כן, יש לי חשבון פעיל נוסף בבנק', en: 'Yes, I have an additional active bank account' },
+            label: {
+              he: 'כן, יש לי חשבון פעיל נוסף בבנק',
+              en: 'Yes, I have an additional active bank account',
+            },
           },
         ],
       },
@@ -152,7 +184,14 @@ const SEED: SeedScreen[] = [
         text: { he: 'בחירת בנק', en: 'Select bank' },
         type: 'TEXT',
         parentKey: 'q_other_bank_accounts',
-        dependencies: [{ triggerKey: 'q_other_bank_accounts', operator: 'EQUALS', value: 'yes', group: 0 }],
+        dependencies: [
+          {
+            triggerKey: 'q_other_bank_accounts',
+            operator: 'EQUALS',
+            value: 'yes',
+            group: 0,
+          },
+        ],
       },
       {
         key: 'q_non_bank_credit_cards',
@@ -162,11 +201,26 @@ const SEED: SeedScreen[] = [
         },
         type: 'SINGLE_CHOICE',
         options: [
-          { value: 'none', label: { he: 'אין לי כרטיסים חוץ-בנקאיים.', en: 'I have no non-bank cards.' } },
-          { value: 'one', label: { he: 'יש לי כרטיס חוץ-בנקאי אחד.', en: 'I have one non-bank card.' } },
+          {
+            value: 'none',
+            label: {
+              he: 'אין לי כרטיסים חוץ-בנקאיים.',
+              en: 'I have no non-bank cards.',
+            },
+          },
+          {
+            value: 'one',
+            label: {
+              he: 'יש לי כרטיס חוץ-בנקאי אחד.',
+              en: 'I have one non-bank card.',
+            },
+          },
           {
             value: 'two_or_more',
-            label: { he: 'יש לי 2 כרטיסים חוץ-בנקאיים או יותר.', en: 'I have 2 or more non-bank cards.' },
+            label: {
+              he: 'יש לי 2 כרטיסים חוץ-בנקאיים או יותר.',
+              en: 'I have 2 or more non-bank cards.',
+            },
           },
         ],
       },
@@ -201,7 +255,14 @@ const SEED: SeedScreen[] = [
         },
         type: 'NUMBER',
         parentKey: 'q_investment_real_estate',
-        dependencies: [{ triggerKey: 'q_investment_real_estate', operator: 'EQUALS', value: 'yes', group: 0 }],
+        dependencies: [
+          {
+            triggerKey: 'q_investment_real_estate',
+            operator: 'EQUALS',
+            value: 'yes',
+            group: 0,
+          },
+        ],
       },
       {
         key: 'q_long_term_savings_location',
@@ -213,17 +274,32 @@ const SEED: SeedScreen[] = [
         options: [
           {
             value: 'study_fund',
-            label: { he: 'קרן השתלמות (בבית השקעות / חברת ביטוח)', en: 'Study fund (investment house / insurance company)' },
+            label: {
+              he: 'קרן השתלמות (בבית השקעות / חברת ביטוח)',
+              en: 'Study fund (investment house / insurance company)',
+            },
           },
           {
             value: 'provident_fund',
-            label: { he: 'קופת גמל להשקעה / פוליסת חיסכון פיננסית', en: 'Provident fund for investment / financial savings policy' },
+            label: {
+              he: 'קופת גמל להשקעה / פוליסת חיסכון פיננסית',
+              en: 'Provident fund for investment / financial savings policy',
+            },
           },
           {
             value: 'pension_fund',
-            label: { he: 'קרן פנסיה / ביטוח מנהלים', en: "Pension fund / managers' insurance" },
+            label: {
+              he: 'קרן פנסיה / ביטוח מנהלים',
+              en: "Pension fund / managers' insurance",
+            },
           },
-          { value: 'none', label: { he: 'אין לי חסכונות מחוץ לבנק.', en: 'I have no savings outside the bank.' } },
+          {
+            value: 'none',
+            label: {
+              he: 'אין לי חסכונות מחוץ לבנק.',
+              en: 'I have no savings outside the bank.',
+            },
+          },
         ],
       },
       {
@@ -237,8 +313,18 @@ const SEED: SeedScreen[] = [
         parentKey: 'q_long_term_savings_location',
         // study_fund OR provident_fund -> two rules in DIFFERENT groups.
         dependencies: [
-          { triggerKey: 'q_long_term_savings_location', operator: 'INCLUDES', value: 'study_fund', group: 0 },
-          { triggerKey: 'q_long_term_savings_location', operator: 'INCLUDES', value: 'provident_fund', group: 1 },
+          {
+            triggerKey: 'q_long_term_savings_location',
+            operator: 'INCLUDES',
+            value: 'study_fund',
+            group: 0,
+          },
+          {
+            triggerKey: 'q_long_term_savings_location',
+            operator: 'INCLUDES',
+            value: 'provident_fund',
+            group: 1,
+          },
         ],
       },
     ],
@@ -260,23 +346,49 @@ const SEED: SeedScreen[] = [
         },
         type: 'SINGLE_CHOICE',
         options: [
-          { value: 'no', label: { he: 'לא, אין לי הלוואות מחוץ לבנק.', en: 'No, I have no loans outside the bank.' } },
+          {
+            value: 'no',
+            label: {
+              he: 'לא, אין לי הלוואות מחוץ לבנק.',
+              en: 'No, I have no loans outside the bank.',
+            },
+          },
           { value: 'yes', label: { he: 'כן', en: 'Yes' } },
         ],
       },
       {
         key: 'q_loan_monthly_repayment',
-        text: { he: 'מהו ההחזר החודשי של הלוואה זו? (בש"ח)', en: 'What is the monthly repayment of this loan? (in NIS)' },
+        text: {
+          he: 'מהו ההחזר החודשי של הלוואה זו? (בש"ח)',
+          en: 'What is the monthly repayment of this loan? (in NIS)',
+        },
         type: 'NUMBER',
         parentKey: 'q_off_bank_loans',
-        dependencies: [{ triggerKey: 'q_off_bank_loans', operator: 'EQUALS', value: 'yes', group: 0 }],
+        dependencies: [
+          {
+            triggerKey: 'q_off_bank_loans',
+            operator: 'EQUALS',
+            value: 'yes',
+            group: 0,
+          },
+        ],
       },
       {
         key: 'q_loan_remaining_months',
-        text: { he: 'בעוד כמה חודשים היא צפויה להסתיים?', en: 'In how many months is it expected to end?' },
+        text: {
+          he: 'בעוד כמה חודשים היא צפויה להסתיים?',
+          en: 'In how many months is it expected to end?',
+        },
         type: 'NUMBER',
         parentKey: 'q_off_bank_loans',
-        dependencies: [{ triggerKey: 'q_off_bank_loans', operator: 'EQUALS', value: 'yes', group: 0 }],
+        dependencies: [
+          {
+            triggerKey: 'q_off_bank_loans',
+            operator: 'EQUALS',
+            value: 'yes',
+            group: 0,
+          },
+        ],
       },
     ],
   },
@@ -332,7 +444,9 @@ export class SeedQuestionnaireData1750000100000 implements MigrationInterface {
       // Insert questions in declared order so any parent precedes its children.
       for (let q = 0; q < screen.questions.length; q++) {
         const question = screen.questions[q];
-        const parentId = question.parentKey ? await questionId(question.parentKey) : null;
+        const parentId = question.parentKey
+          ? await questionId(question.parentKey)
+          : null;
 
         await queryRunner.query(
           `INSERT INTO questionnaire_questions
@@ -382,7 +496,13 @@ export class SeedQuestionnaireData1750000100000 implements MigrationInterface {
                SELECT 1 FROM questionnaire_dependencies
                WHERE question_id = $1 AND trigger_question_id = $2 AND group_index = $5
              )`,
-            [qId, triggerId, dep.operator, JSON.stringify(dep.value), dep.group],
+            [
+              qId,
+              triggerId,
+              dep.operator,
+              JSON.stringify(dep.value),
+              dep.group,
+            ],
           );
         }
       }

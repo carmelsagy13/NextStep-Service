@@ -7,9 +7,7 @@ import { RoadmapState } from '../database/entities/roadmap-state.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([RoadmapStep, RoadmapState, UserProfile]),
-  ],
+  imports: [TypeOrmModule.forFeature([RoadmapStep, RoadmapState, UserProfile])],
   controllers: [RoadmapController],
   providers: [RoadmapService],
   exports: [RoadmapService],

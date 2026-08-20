@@ -9,9 +9,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * run even when `synchronize: true` has already created them in development.
  * Existing rows are backfilled with the current timestamp so no NULLs remain.
  */
-export class AddUserProfileTimestamps1749500000000
-  implements MigrationInterface
-{
+export class AddUserProfileTimestamps1749500000000 implements MigrationInterface {
   name = 'AddUserProfileTimestamps1749500000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

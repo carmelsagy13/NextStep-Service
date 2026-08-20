@@ -9,7 +9,10 @@ import {
   UserGoal,
   UserGoalStatus,
 } from '../database/entities/user-goal.entity.js';
-import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
+import {
+  RoadmapGoal,
+  RoadmapGoalType,
+} from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import {
   criteriaScoresFromProfile,
@@ -166,6 +169,7 @@ export class AspirationSyncService {
       linkedTasks,
       eligibleTemplates,
       decision,
+      profile?.currentStep ?? null,
     );
   }
 
@@ -260,7 +264,7 @@ export class AspirationSyncService {
       '  is acceptable). If NO suitable template exists, do not add anything.',
       '- Recompute target_amount / target_date from the aspiration values.',
       '- Recompute dynamic_params that depend on the target — e.g. a monthly saving',
-      "  figure = remaining amount / months until target_date. Use REAL numbers; if a",
+      '  figure = remaining amount / months until target_date. Use REAL numbers; if a',
       '  value is not derivable, use null.',
       '- Reference user_goal_id ONLY from the tasks list and roadmap_goal_id ONLY',
       '  from the templates list and aspiration_id ONLY from the aspirations list.',
@@ -319,15 +323,14 @@ export class AspirationSyncService {
     linkedTasks: UserGoal[],
     eligibleTemplates: RoadmapGoal[],
     decision: TaskSyncDecision,
+    currentStep: number | null,
   ): Promise<number> {
     const taskById = new Map(linkedTasks.map((t) => [t.goalId, t]));
     const revisionByAspiration = new Map(
       staleAspirations.map((a) => [a.aspirationId, a.revision]),
     );
     const staleIds = new Set(staleAspirations.map((a) => a.aspirationId));
-    const templateById = new Map(
-      eligibleTemplates.map((g) => [g.goalId, g]),
-    );
+    const templateById = new Map(eligibleTemplates.map((g) => [g.goalId, g]));
     // Dedup key: a template already serving a given aspiration must not be added
     // twice (allows the same generic template to serve different aspirations).
     const existingByTemplateAspiration = new Map(
@@ -380,18 +383,14 @@ export class AspirationSyncService {
         const aspiration = staleAspirations.find(
           (s) => s.aspirationId === a.aspiration_id,
         );
-        const goalName = this.renderTaskName(
-          template.title,
-          aspiration?.title,
-        );
+        const goalName = this.renderTaskName(template.title, aspiration?.title);
 
         const task = manager.create(UserGoal, {
           userId,
           roadmapGoalId: template.goalId,
           aspirationId: a.aspiration_id,
           goalName,
-          dynamicParams:
-            (a.dynamic_params as Record<string, any>) ?? undefined,
+          dynamicParams: (a.dynamic_params as Record<string, any>) ?? undefined,
           targetAmount:
             a.target_amount ?? aspiration?.targetAmount ?? undefined,
           targetDate: a.target_date
@@ -401,6 +400,7 @@ export class AspirationSyncService {
               : undefined,
           currentAmount: 0,
           status: UserGoalStatus.ACTIVE,
+          assignedAtStep: currentStep,
           priority:
             a.priority != null && Number.isFinite(Number(a.priority))
               ? Number(a.priority)
@@ -416,10 +416,7 @@ export class AspirationSyncService {
       //    its parameters were considered and judged correct.
       for (const task of linkedTasks) {
         if (touched.includes(task)) continue;
-        if (
-          task.aspirationId &&
-          revisionByAspiration.has(task.aspirationId)
-        ) {
+        if (task.aspirationId && revisionByAspiration.has(task.aspirationId)) {
           task.syncedAspirationRevision = revisionByAspiration.get(
             task.aspirationId,
           )!;
@@ -442,7 +439,10 @@ export class AspirationSyncService {
   }
 
   /** Substitute the `{{goal}}` placeholder in a template title and clamp length. */
-  private renderTaskName(templateTitle: string, aspirationTitle?: string): string {
+  private renderTaskName(
+    templateTitle: string,
+    aspirationTitle?: string,
+  ): string {
     const rendered = aspirationTitle
       ? templateTitle.replace(/\{\{\s*goal\s*\}\}/gi, aspirationTitle)
       : templateTitle;
@@ -456,6 +456,8 @@ export class AspirationSyncService {
   }
 
   private toIsoDate(d: Date | string): string {
-    return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+    return d instanceof Date
+      ? d.toISOString().slice(0, 10)
+      : String(d).slice(0, 10);
   }
 }

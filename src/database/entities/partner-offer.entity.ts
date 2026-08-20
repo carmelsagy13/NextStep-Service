@@ -51,7 +51,12 @@ export class PartnerOffer {
   @Column({ type: 'varchar', length: 160, name: 'headline_he' })
   headlineHe: string;
 
-  @Column({ type: 'varchar', length: 255, name: 'subheadline_he', nullable: true })
+  @Column({
+    type: 'varchar',
+    length: 255,
+    name: 'subheadline_he',
+    nullable: true,
+  })
   subheadlineHe: string | null;
 
   /** Short promotional chips, e.g. `["0% דמי ניהול לשנה"]`. */

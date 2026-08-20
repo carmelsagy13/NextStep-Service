@@ -1,7 +1,4 @@
-import {
-  LOSS_CURRENCY,
-  PROJECTION_MONTHS,
-} from './loss-aversion.constants.js';
+import { LOSS_CURRENCY, PROJECTION_MONTHS } from './loss-aversion.constants.js';
 import { Logger } from '@nestjs/common';
 import {
   IdleSurplusStrategy,

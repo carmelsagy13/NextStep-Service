@@ -8,9 +8,13 @@ export class UpdateGoalDto {
   @IsUUID()
   goalId: string;
 
-  @ApiPropertyOptional({ description: 'Current progress amount toward the target' })
+  @ApiPropertyOptional({
+    description: 'Current progress amount toward the target',
+  })
   @IsOptional()
-  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : value))
+  @Transform(({ value }) =>
+    value !== undefined && value !== null ? Number(value) : value,
+  )
   @IsNumber()
   @Min(0)
   currentAmount?: number;

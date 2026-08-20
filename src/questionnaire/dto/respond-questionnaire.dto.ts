@@ -46,7 +46,7 @@ export class AnswerItemDto {
 
 export class RespondQuestionnaireDto {
   @ApiProperty({
-    description: 'Flat list of the user\'s answers, one entry per question.',
+    description: "Flat list of the user's answers, one entry per question.",
     type: [AnswerItemDto],
   })
   @IsArray()

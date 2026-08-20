@@ -17,9 +17,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * aspirations from ones created by the live app, so this data migration is not
  * auto-reversible.
  */
-export class BackfillAspirationsFromQuestionnaire1750000700000
-  implements MigrationInterface
-{
+export class BackfillAspirationsFromQuestionnaire1750000700000 implements MigrationInterface {
   name = 'BackfillAspirationsFromQuestionnaire1750000700000';
 
   /** Maps a sub-field key prefix to its goal_type_catalog code. */
@@ -81,7 +79,9 @@ export class BackfillAspirationsFromQuestionnaire1750000700000
 
         const prefix = TYPE_TO_PREFIX[code];
         const rawAmount = prefix ? answers.get(`${prefix}_amount`) : undefined;
-        const rawMonths = prefix ? answers.get(`${prefix}_timeframe`) : undefined;
+        const rawMonths = prefix
+          ? answers.get(`${prefix}_timeframe`)
+          : undefined;
 
         const months =
           rawMonths != null && type.supports_timeframe

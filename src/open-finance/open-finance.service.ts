@@ -6,14 +6,17 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { BankConsent } from '../database/entities/bank-consent.entity.js';
 import { BankToken } from '../database/entities/bank-token.entity.js';
 import {
   RoadmapStep,
   CriteriaDetail,
 } from '../database/entities/roadmap-step.entity.js';
-import { RoadmapGoal, RoadmapGoalType } from '../database/entities/roadmap-goal.entity.js';
+import {
+  RoadmapGoal,
+  RoadmapGoalType,
+} from '../database/entities/roadmap-goal.entity.js';
 import { RoadmapState } from '../database/entities/roadmap-state.entity.js';
 import {
   UserGoal,
@@ -33,7 +36,10 @@ import { computeLossAversion } from '../loss-aversion/loss-aversion.engine.js';
 import type { LossAversionResult } from '../loss-aversion/loss-aversion.types.js';
 import { FinancialAnalysisService } from '../financial-analysis/financial-analysis.service.js';
 import { EventDetectionService } from '../event-detection/event-detection.service.js';
-import { isMarketingGoalAllowed, MAX_ACTIVE_MARKETING_GOALS } from '../common/marketing-goal-policy.js';
+import {
+  isMarketingGoalAllowed,
+  MAX_ACTIVE_MARKETING_GOALS,
+} from '../common/marketing-goal-policy.js';
 import { GoalResponseDto } from '../goals/dto/goal-response.dto.js';
 import {
   GOAL_RESPONSE_RELATIONS,
@@ -449,8 +455,8 @@ export class OpenFinanceService {
       '`questionnaireParameters` (self-declared signals). Inside',
       '`questionnaireParameters`, a parameter whose value is an EMPTY string ("")',
       'is NOT a target to match — it simply flags a questionnaire question the model',
-      'must INSPECT: read the user\'s answer to that question and weigh it into this',
-      'criterion\'s score. A parameter WITH a value still means match against that',
+      "must INSPECT: read the user's answer to that question and weigh it into this",
+      "criterion's score. A parameter WITH a value still means match against that",
       'specific value. If the referenced answer is missing, ignore that parameter.',
       criteriaByStageSection,
       '',
@@ -479,13 +485,17 @@ export class OpenFinanceService {
         knowledge_level: '<string or null>',
         criteria_reasoning: {
           cash_flow: '<short explanation of the cash_flow score>',
-          credit_consumption: '<short explanation of the credit_consumption score>',
+          credit_consumption:
+            '<short explanation of the credit_consumption score>',
           loans: '<short explanation of the loans score>',
-          savings_investments: '<short explanation of the savings_investments score>',
-          pension_long_term: '<short explanation of the pension_long_term score>',
+          savings_investments:
+            '<short explanation of the savings_investments score>',
+          pension_long_term:
+            '<short explanation of the pension_long_term score>',
           lifestyle_clubs: '<short explanation of the lifestyle_clubs score>',
           mortgage: '<short explanation of the mortgage score>',
-          system_indicators: '<short explanation of the system_indicators score>',
+          system_indicators:
+            '<short explanation of the system_indicators score>',
         },
       }),
       '',
@@ -505,7 +515,11 @@ export class OpenFinanceService {
       OpenFinanceService.STRICT_JSON_SUFFIX,
     ].join('\n');
 
-    const rawText = await this.llm.generate(systemPrompt, summaryJson, 'profile');
+    const rawText = await this.llm.generate(
+      systemPrompt,
+      summaryJson,
+      'profile',
+    );
     return this.llm.parseJson<AiCriteriaProfile>(rawText, 'profile');
   }
 
@@ -539,7 +553,13 @@ export class OpenFinanceService {
         }),
       ]);
 
-    return { currentProfile, currentState, existingTasks, history, aspirations };
+    return {
+      currentProfile,
+      currentState,
+      existingTasks,
+      history,
+      aspirations,
+    };
   }
 
   /**
@@ -602,7 +622,8 @@ export class OpenFinanceService {
                   g.type === RoadmapGoalType.MARKETING && g.offer
                     ? `    offer_headline: "${g.offer.headlineHe}"`
                     : null,
-                  g.type === RoadmapGoalType.MARKETING && g.offer?.benefitTags?.length
+                  g.type === RoadmapGoalType.MARKETING &&
+                  g.offer?.benefitTags?.length
                     ? `    benefit_tags: ${JSON.stringify(g.offer.benefitTags)}`
                     : null,
                   g.type === RoadmapGoalType.MARKETING && g.offer?.targeting
@@ -647,9 +668,7 @@ export class OpenFinanceService {
               t.roadmapGoalId
                 ? `    roadmap_goal_id: "${t.roadmapGoalId}"`
                 : null,
-              t.aspirationId
-                ? `    aspiration_id: "${t.aspirationId}"`
-                : null,
+              t.aspirationId ? `    aspiration_id: "${t.aspirationId}"` : null,
             ]
               .filter(Boolean)
               .join('\n'),
@@ -664,8 +683,7 @@ export class OpenFinanceService {
       ? context.aspirations
           .map((a) => {
             const changed =
-              a.lastSyncedRevision == null ||
-              a.revision > a.lastSyncedRevision;
+              a.lastSyncedRevision == null || a.revision > a.lastSyncedRevision;
             return [
               `  - aspiration_id: "${a.aspirationId}"`,
               `    goal_type: ${a.goalTypeCode}`,
@@ -728,15 +746,17 @@ export class OpenFinanceService {
       '',
       '## Reconciliation Rules',
       '- FIRST set roadmap_state.current_step. Goals belonging to that step are the PRIMARY focus: prefer them and give them the strongest priority.',
-      '- You MAY ALSO add goals from ANY other step (higher or lower) when they are genuinely suitable for this user\'s financial situation. Current-step goals should rank above cross-step goals unless a cross-step goal is clearly more urgent for the user right now.',
+      "- You MAY ALSO add goals from ANY other step (higher or lower) when they are genuinely suitable for this user's financial situation. Current-step goals should rank above cross-step goals unless a cross-step goal is clearly more urgent for the user right now.",
       '- Criteria-tagged goals (with a "criteria" field) are especially strong cross-step candidates: e.g. a "loans" goal at step 2 fits a user whose loans score is >= 2 even if their overall step is 1.',
       '- Reference existing tasks ONLY by their user_goal_id.',
-      "- Reference new tasks ONLY by a roadmap_goal_id from the Available Goal Templates.",
+      '- Reference new tasks ONLY by a roadmap_goal_id from the Available Goal Templates.',
       '- NEVER invent IDs. NEVER duplicate an existing task: if a relevant goal template',
       '  is already present among the existing tasks, KEEP or REPRIORITIZE it instead of adding it.',
       '- Put tasks that are no longer relevant (e.g. ones the user has outgrown or that no longer fit their situation) into "remove". Do NOT remove a task merely because it belongs to a different step than the current one — keep it if it is still suitable.',
       '- Put tasks the data shows are achieved into "complete".',
       '- Only "add" templates that are genuinely relevant and not already assigned.',
+      '- An aspiration is a SIDE INTEREST, not a filter on the roadmap. Select and rank tasks EXACTLY as you would if the user had declared no aspirations at all, then optionally add ONE task that serves an aspiration. An aspiration must NEVER be a reason to remove, skip, deprioritise or decline to add a roadmap task that the financial data supports on its own — the roadmap is what moves the user up the pyramid; an aspiration only says what they are personally saving for.',
+      '- At most ONE aspiration-linked task should be active per aspiration, and aspiration-linked tasks must not occupy the top priority slots ahead of current-step roadmap tasks.',
       '- When adding a goal, fill dynamic_params with REAL numbers taken from the financial features block (e.g. surplus, currentBalance, activeCreditCardsCount, totalInvestments). NEVER invent figures; if a value is not derivable from the features, use null.',
       '- A dynamic_params key that describes what the user has ALREADY achieved (a count of months, times, streaks or an amount accumulated so far) may ONLY be filled from an actual measurement in the features block. If no feature measures it, set it to null. NEVER copy the goal\u2019s target number into such a key: a goal of "6 consecutive months" does NOT mean 6 months are already done, and writing 6 there tells the user they have finished when they have not. When unsure, null is always the correct answer.',
       '',
@@ -746,7 +766,7 @@ export class OpenFinanceService {
       'other goal:',
       '- Add AT MOST ONE marketing goal in total, and only if the user does not already have one.',
       '- Add one ONLY when a concrete, numeric need in the financial features block matches the',
-      '  goal\'s `offer_targeting` (e.g. a sustained discretionarySurplus above minMonthlySurplus).',
+      "  goal's `offer_targeting` (e.g. a sustained discretionarySurplus above minMonthlySurplus).",
       '  If the numbers do not clearly support it, add NONE.',
       '- NEVER add one when the user shows any sign of distress: negative monthlyNetCashFlow,',
       '  any non-zero systemFlags, deficit months dominating monthsCovered, or current_step below 2.',
@@ -764,27 +784,29 @@ export class OpenFinanceService {
       'violates them is discarded regardless of what you return.',
       '',
       '## Overarching Goal (Aspiration) Sync — IMPORTANT',
-      "The user declares OVERARCHING goals (\"aspirations\") separately — e.g. a wedding",
+      'The user declares OVERARCHING goals ("aspirations") separately — e.g. a wedding',
       'budget or a car target. An existing task may be LINKED to one via aspiration_id.',
-      'When an aspiration is marked `changed_since_last_sync: true`, the linked task\'s',
+      'Treat this section as BOOKKEEPING for aspiration-linked tasks only. It must not',
+      'change which roadmap tasks you select, keep or drop — see the Reconciliation Rules.',
+      "When an aspiration is marked `changed_since_last_sync: true`, the linked task's",
       'parameters are STALE. Put such tasks into "update" (NOT remove+add) and recompute:',
-      '- target_amount / target_date from the aspiration\'s new values;',
+      "- target_amount / target_date from the aspiration's new values;",
       '- dynamic_params that depend on the target (e.g. a monthly saving figure =',
       '  remaining amount / months until target_date). Use REAL numbers or null.',
       'Only "update" tasks that reference an aspiration_id present below and a',
-      'user_goal_id present in Existing Tasks. Do NOT change a task\'s identity.',
+      "user_goal_id present in Existing Tasks. Do NOT change a task's identity.",
       'If an aspiration has NO linked task yet and a suitable template exists in the',
       'task bank, ADD that template and set its `aspiration_id` to the aspiration it',
       'serves (a generic saving template with a {{goal}} placeholder is acceptable),',
       'so the new task is linked to the goal it advances.',
       '',
       '## Partial Progress Tracking — IMPORTANT',
-      'For every ACTIVE task that has a target_amount, ESTIMATE the user\'s actual',
+      "For every ACTIVE task that has a target_amount, ESTIMATE the user's actual",
       'accumulated progress toward it from the new financial features (e.g.',
       'currentBalance, totalInvestments, totalSecuritiesValue, accumulated surplus,',
       'or a dedicated savings balance) — choose the figure that best reflects money',
       'already set aside for that specific goal. If that estimate MEANINGFULLY differs',
-      'from the task\'s current `progress` value shown in Existing Tasks, return an',
+      "from the task's current `progress` value shown in Existing Tasks, return an",
       '"update" action for that user_goal_id carrying the recalculated `current_amount`:',
       '- current_amount is in ILS, must be >= 0 and SHOULD NOT exceed target_amount;',
       '- use REAL numbers derived from the features block — never invent figures; if no',
@@ -802,7 +824,9 @@ export class OpenFinanceService {
       '## Existing Tasks',
       existingTasksSection,
       '',
-      "## User's Overarching Goals (Aspirations)",
+      "## User's Overarching Goals (Aspirations) — LOW WEIGHT, context only",
+      'Personal savings targets the user happens to have. They do NOT describe the',
+      "user's financial health and carry no weight in stage or task selection.",
       aspirationsSection,
       '',
       '## Available Goal Templates (task bank, grouped by step)',
@@ -848,7 +872,8 @@ export class OpenFinanceService {
           ],
           add: [
             {
-              roadmap_goal_id: "<UUID from the Available Goal Templates (any step)>",
+              roadmap_goal_id:
+                '<UUID from the Available Goal Templates (any step)>',
               aspiration_id:
                 '<UUID of the aspiration this task serves, or omit if none>',
               target_amount: '<number or null>',
@@ -870,7 +895,7 @@ export class OpenFinanceService {
           relevant_but_premature:
             '<array of roadmap_goal_id strings: goals that ARE relevant but the user is not ready for them yet>',
           marketing_rationale:
-            '<Hebrew: which sponsored goal was added and what in the user\'s numbers justifies it — or why none was added>',
+            "<Hebrew: which sponsored goal was added and what in the user's numbers justifies it — or why none was added>",
         },
       }),
       '',
@@ -881,14 +906,14 @@ export class OpenFinanceService {
       'risk signals override stronger indicators).',
       'IMPORTANT: In task_selection_reasoning.why_not_added, explain your decision-making:',
       '- Which goals from the Available Goal Templates were considered but NOT added, and why?',
-      '- Are they irrelevant to this user\'s situation?',
+      "- Are they irrelevant to this user's situation?",
       '- Does the user lack the financial prerequisites?',
       '- Are they redundant with existing tasks?',
       'In relevant_but_premature, list goal IDs that would be valuable but require',
       'the user to progress further (e.g., investment goals for someone still building',
-      'an emergency fund). This helps track the user\'s journey.',
+      "an emergency fund). This helps track the user's journey.",
       '',
-      'When the questionnaire block below is present, let the user\'s SELF-DECLARED',
+      "When the questionnaire block below is present, let the user's SELF-DECLARED",
       'goals (e.g. buying a car, wedding, home equity, safety net, early retirement)',
       'inform task prioritization. You may add suitable goals from ANY step in the',
       'Available Goal Templates. Do not invent tasks from questionnaire goals.',
@@ -1069,8 +1094,13 @@ export class OpenFinanceService {
       for (const c of decision.task_reconciliation.complete) {
         const t = byId.get(c.user_goal_id);
         if (!t) continue; // ownership / hallucination guard
+        // Reassessments re-list tasks the user already finished. Completion is
+        // recorded once, so re-confirming it must not move the timestamp or
+        // re-attribute the task to whatever step the user has since reached.
+        if (t.status === UserGoalStatus.COMPLETED) continue;
         t.status = UserGoalStatus.COMPLETED;
         t.completedAt = now;
+        t.completedAtStep = currentStep;
         touched.add(t);
       }
 
@@ -1117,7 +1147,10 @@ export class OpenFinanceService {
         // progress onto the task. Only ACTIVE tasks reach here (COMPLETED ones
         // were skipped above), so this never reverts a finished task. Clamp to
         // >= 0 and never overshoot a known target_amount.
-        if (u.current_amount != null && Number.isFinite(Number(u.current_amount))) {
+        if (
+          u.current_amount != null &&
+          Number.isFinite(Number(u.current_amount))
+        ) {
           let next = Math.max(0, Number(u.current_amount));
           if (t.targetAmount != null && Number(t.targetAmount) > 0) {
             next = Math.min(next, Number(t.targetAmount));
@@ -1154,7 +1187,8 @@ export class OpenFinanceService {
             (t) =>
               t.status === UserGoalStatus.ACTIVE &&
               t.roadmapGoalId &&
-              templateMap.get(t.roadmapGoalId)?.type === RoadmapGoalType.MARKETING,
+              templateMap.get(t.roadmapGoalId)?.type ===
+                RoadmapGoalType.MARKETING,
           ).length,
       );
 
@@ -1190,6 +1224,8 @@ export class OpenFinanceService {
           dup.status = UserGoalStatus.ACTIVE;
           dup.removedAt = null;
           dup.removalReason = null;
+          // Reactivation is a fresh assignment, so it re-anchors to this step.
+          dup.assignedAtStep = currentStep;
           dup.dynamicParams = a.dynamic_params ?? dup.dynamicParams ?? {};
           dup.aiInsight = a.ai_insight ?? dup.aiInsight;
           dup.priority = Number(a.priority) || dup.priority || 0;
@@ -1213,6 +1249,7 @@ export class OpenFinanceService {
             dynamicParams: a.dynamic_params ?? {},
             targetAmount: a.target_amount ?? undefined,
             currentAmount: 0,
+            assignedAtStep: currentStep,
             targetDate: a.target_date ? new Date(a.target_date) : undefined,
             status: UserGoalStatus.ACTIVE,
             priority: Number(a.priority) || 0,
@@ -1239,9 +1276,14 @@ export class OpenFinanceService {
         await manager.save(UserAspiration, syncedAspirations);
       }
 
-      // Return the user's currently active tasks with their templates populated.
-      const activeGoals = await manager.find(UserGoal, {
-        where: { userId, status: UserGoalStatus.ACTIVE },
+      // Active tasks plus the ones already finished: the client replaces its
+      // whole task list with this payload, and dropping completed tasks would
+      // erase the history shown on steps the user has already passed.
+      const visibleGoals = await manager.find(UserGoal, {
+        where: {
+          userId,
+          status: In([UserGoalStatus.ACTIVE, UserGoalStatus.COMPLETED]),
+        },
         relations: GOAL_RESPONSE_RELATIONS,
         order: { priority: 'ASC' },
       });
@@ -1249,10 +1291,13 @@ export class OpenFinanceService {
       return {
         roadmap_state: savedState,
         user_goals: toGoalResponseList(
-          activeGoals,
+          visibleGoals,
           resolveAssetBaseUrl(this.config.get<string>('PUBLIC_ASSET_BASE_URL')),
         ),
-        task_selection_reasoning: { why_not_added: '', relevant_but_premature: [] },
+        task_selection_reasoning: {
+          why_not_added: '',
+          relevant_but_premature: [],
+        },
       };
     });
   }

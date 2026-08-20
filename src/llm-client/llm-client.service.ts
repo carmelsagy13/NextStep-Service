@@ -99,8 +99,9 @@ export class LlmClientService implements OnModuleInit {
     this.provider =
       this.geminiOnly || provider === 'gemini' ? 'gemini' : 'college';
     this.fallbackEnabled =
-      (this.config.get<string>('LLM_FALLBACK', 'true') || 'true').toLowerCase() !==
-      'false';
+      (
+        this.config.get<string>('LLM_FALLBACK', 'true') || 'true'
+      ).toLowerCase() !== 'false';
 
     // ─── College LLM setup ───────────────────────────────────────────────
     const baseUrl = this.config.get<string>('COLLEGE_LLM_BASE_URL', '');
@@ -134,9 +135,7 @@ export class LlmClientService implements OnModuleInit {
       );
       // Accepts base URLs with or without the trailing /v1 — request paths
       // already carry it.
-      this.collegeBaseUrl = baseUrl
-        .replace(/\/+$/, '')
-        .replace(/\/v1$/i, '');
+      this.collegeBaseUrl = baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');
       this.collegeTimeoutMs = Number(
         this.config.get<string>('COLLEGE_LLM_TIMEOUT_MS', '120000'),
       );
@@ -147,7 +146,8 @@ export class LlmClientService implements OnModuleInit {
         this.config.get<string>('COLLEGE_LLM_HOST_HEADER', '') || '';
       this.collegeInsecureTls =
         (
-          this.config.get<string>('COLLEGE_LLM_INSECURE_TLS', 'false') || 'false'
+          this.config.get<string>('COLLEGE_LLM_INSECURE_TLS', 'false') ||
+          'false'
         ).toLowerCase() === 'true';
 
       this.collegeHttp = axios.create({
@@ -155,12 +155,8 @@ export class LlmClientService implements OnModuleInit {
         timeout: this.collegeTimeoutMs,
         headers: {
           'Content-Type': 'application/json',
-          ...(username
-            ? { Authorization: `Basic ${credentials}` }
-            : {}),
-          ...(this.collegeHostHeader
-            ? { Host: this.collegeHostHeader }
-            : {}),
+          ...(username ? { Authorization: `Basic ${credentials}` } : {}),
+          ...(this.collegeHostHeader ? { Host: this.collegeHostHeader } : {}),
         },
         ...(this.collegeBaseUrl.toLowerCase().startsWith('https://')
           ? {
@@ -304,7 +300,8 @@ export class LlmClientService implements OnModuleInit {
         );
       } catch (err) {
         const info = this.describeCollegeError(err);
-        probe.openAiError = `HTTP ${info.status ?? '-'} ${info.code ?? ''} ${info.message}`.trim();
+        probe.openAiError =
+          `HTTP ${info.status ?? '-'} ${info.code ?? ''} ${info.message}`.trim();
         this.logger.warn(
           `[College LLM] GET ${this.collegeBaseUrl}/v1/models FAILED in ` +
             `${Date.now() - t0}ms | status=${info.status ?? 'n/a'} ` +

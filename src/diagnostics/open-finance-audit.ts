@@ -37,7 +37,9 @@ export function auditRawCollection(
   ];
 
   if (total === 0) {
-    lines.push('NO ITEMS RETURNED — every feature derived from this endpoint will be 0');
+    lines.push(
+      'NO ITEMS RETURNED — every feature derived from this endpoint will be 0',
+    );
     emit(logger, lines, 'warn');
     return;
   }
@@ -70,15 +72,21 @@ export function auditRawCollection(
 
   const missing = expected.filter((f) => !present.has(f));
   if (missing.length) {
-    lines.push(`MISSING (our code expects, provider never sent): ${missing.join(', ')}`);
+    lines.push(
+      `MISSING (our code expects, provider never sent): ${missing.join(', ')}`,
+    );
   }
   const alwaysEmpty = observed.filter((f) => (populated.get(f) ?? 0) === 0);
   if (alwaysEmpty.length) {
-    lines.push(`ALWAYS EMPTY across all ${total} items: ${alwaysEmpty.join(', ')}`);
+    lines.push(
+      `ALWAYS EMPTY across all ${total} items: ${alwaysEmpty.join(', ')}`,
+    );
   }
   const unmapped = observed.filter((f) => !expected.includes(f));
   if (unmapped.length) {
-    lines.push(`NEW FIELDS not in our types (provider added these): ${unmapped.join(', ')}`);
+    lines.push(
+      `NEW FIELDS not in our types (provider added these): ${unmapped.join(', ')}`,
+    );
   }
 
   if (groupByKey) {
@@ -157,7 +165,7 @@ export function auditAccountBalances(
   emit(logger, lines, 'log');
 }
 
-/** Field coverage for a single returned object (monthly report, balance history). */export function auditRawObject(
+/** Field coverage for a single returned object (monthly report, balance history). */ export function auditRawObject(
   logger: Logger,
   endpoint: string,
   obj: unknown,
@@ -238,9 +246,13 @@ export function auditFeatures(
   lines.push(
     `falsy but meaningful: ${meaningfulFalsy.join(', ') || 'none'} (0/false is a real reading here)`,
   );
-  lines.push(`dead fields       : ${dead.join(', ') || 'none'} (safe to delete from the extractor)`);
+  lines.push(
+    `dead fields       : ${dead.join(', ') || 'none'} (safe to delete from the extractor)`,
+  );
   if (unmapped.length) {
-    lines.push(`unknown fields    : ${unmapped.join(', ')} (added to the model but not in the usage map)`);
+    lines.push(
+      `unknown fields    : ${unmapped.join(', ')} (added to the model but not in the usage map)`,
+    );
   }
   if (missingFromPayload.length) {
     lines.push(`expected but absent: ${missingFromPayload.join(', ')}`);
@@ -279,7 +291,7 @@ function describeShape(value: unknown): string {
   if (value === null || value === undefined) return 'null/absent';
   if (Array.isArray(value)) return `array(${value.length})`;
   if (typeof value === 'object') {
-    return `object{${Object.keys(value as object).length} keys}`;
+    return `object{${Object.keys(value).length} keys}`;
   }
   return `${typeof value}${isEmptyValue(value) ? ' (empty)' : ''}`;
 }

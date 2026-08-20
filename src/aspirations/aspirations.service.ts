@@ -342,6 +342,8 @@ export class AspirationsService {
 
   private toIso(d: Date | string | null): string | null {
     if (!d) return null;
-    return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+    return d instanceof Date
+      ? d.toISOString().slice(0, 10)
+      : String(d).slice(0, 10);
   }
 }

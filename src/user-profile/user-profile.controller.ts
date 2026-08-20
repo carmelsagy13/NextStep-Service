@@ -13,21 +13,30 @@ export class UserProfileController {
 
   @Get()
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'Get current user profile. Returns 404 if no profile exists (e.g. after deletion).' })
+  @ApiOperation({
+    summary:
+      'Get current user profile. Returns 404 if no profile exists (e.g. after deletion).',
+  })
   getProfile(@CurrentUser() user: { userId: string }) {
     return this.userProfileService.getProfile(user.userId);
   }
 
   @Get('history')
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'Get the user\u2019s assessment history (abstracted level/criteria snapshots over time).' })
+  @ApiOperation({
+    summary:
+      'Get the user\u2019s assessment history (abstracted level/criteria snapshots over time).',
+  })
   getHistory(@CurrentUser() user: { userId: string }) {
     return this.userProfileService.getHistory(user.userId);
   }
 
   @Get('progress')
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'Get current pyramid level and progress delta vs the previous assessment.' })
+  @ApiOperation({
+    summary:
+      'Get current pyramid level and progress delta vs the previous assessment.',
+  })
   getProgress(@CurrentUser() user: { userId: string }) {
     return this.userProfileService.getProgress(user.userId);
   }
@@ -38,6 +47,9 @@ export class UserProfileController {
     @CurrentUser() user: { userId: string },
     @Body() body: any,
   ) {
-    return this.userProfileService.saveNotificationPreferences(user.userId, body);
+    return this.userProfileService.saveNotificationPreferences(
+      user.userId,
+      body,
+    );
   }
 }

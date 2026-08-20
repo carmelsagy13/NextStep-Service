@@ -14,9 +14,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *          no rows can reference it yet, the down migration intentionally does
  *          nothing (mirrors the repo's other additive enum migrations).
  */
-export class AddRoadmapGoalTypeEducational1750000900000
-  implements MigrationInterface
-{
+export class AddRoadmapGoalTypeEducational1750000900000 implements MigrationInterface {
   name = 'AddRoadmapGoalTypeEducational1750000900000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

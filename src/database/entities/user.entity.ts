@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, OneToOne, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  OneToOne,
+  OneToMany,
+} from 'typeorm';
 import { UserProfile } from './user-profile.entity.js';
 import { UserGoal } from './user-goal.entity.js';
 

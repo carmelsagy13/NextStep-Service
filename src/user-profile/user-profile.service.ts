@@ -50,7 +50,8 @@ export class UserProfileService {
       order: { createdAt: 'DESC' },
       take: 2,
     });
-    if (!latest) throw new NotFoundException('No assessment history found for this user');
+    if (!latest)
+      throw new NotFoundException('No assessment history found for this user');
     return {
       currentStep: latest.step,
       progressPercent: latest.progressPercent,

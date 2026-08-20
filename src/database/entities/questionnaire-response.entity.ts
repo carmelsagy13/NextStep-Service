@@ -50,10 +50,14 @@ export class QuestionnaireResponse {
   @JoinColumn({ name: 'question_id' })
   question: QuestionnaireQuestion;
 
-  @ManyToOne(() => QuestionnaireSubmission, (submission) => submission.responses, {
-    onDelete: 'SET NULL',
-    nullable: true,
-  })
+  @ManyToOne(
+    () => QuestionnaireSubmission,
+    (submission) => submission.responses,
+    {
+      onDelete: 'SET NULL',
+      nullable: true,
+    },
+  )
   @JoinColumn({ name: 'submission_id' })
   submission: QuestionnaireSubmission | null;
 }

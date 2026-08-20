@@ -27,13 +27,17 @@ export class UpdateAspirationDto {
   targetDate?: string;
 
   @ApiPropertyOptional({
-    description: 'Dynamic, goal-type-specific attributes (validated against the catalog schema)',
+    description:
+      'Dynamic, goal-type-specific attributes (validated against the catalog schema)',
   })
   @IsOptional()
   @IsObject()
   attributes?: Record<string, unknown>;
 
-  @ApiPropertyOptional({ description: 'Lifecycle status', enum: UserAspirationStatus })
+  @ApiPropertyOptional({
+    description: 'Lifecycle status',
+    enum: UserAspirationStatus,
+  })
   @IsOptional()
   @IsEnum(UserAspirationStatus)
   status?: UserAspirationStatus;

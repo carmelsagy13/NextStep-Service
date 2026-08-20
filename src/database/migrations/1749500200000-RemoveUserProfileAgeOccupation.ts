@@ -8,9 +8,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `down` migration re-adds both as nullable columns to keep the schema change
  * reversible (existing data is not restored).
  */
-export class RemoveUserProfileAgeOccupation1749500200000
-  implements MigrationInterface
-{
+export class RemoveUserProfileAgeOccupation1749500200000 implements MigrationInterface {
   name = 'RemoveUserProfileAgeOccupation1749500200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

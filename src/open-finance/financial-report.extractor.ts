@@ -88,7 +88,6 @@ function affordabilityRatio(payment: number, surplus: number): number {
   return Math.round((payment / surplus) * 100) / 100;
 }
 
-
 /** Produces a fully-zeroed feature set (used for empty/invalid reports). */
 export function emptyFeatures(): FinancialFeatures {
   return {
@@ -213,9 +212,7 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
 
   // ── Macro debt-service (consumer loans vs mortgage, evaluated independently) ─
   // Monthly repayment = sum of repayment outflows over the window / 3 months.
-  const loans = Array.isArray(report.loans)
-    ? (report.loans as OFLoan[])
-    : undefined;
+  const loans = Array.isArray(report.loans) ? report.loans : undefined;
   const monthlyLoanPayments = round(sumLoanRepayments(loans, 'LOANS') / 3);
   const monthlyMortgagePayments = round(
     sumLoanRepayments(loans, 'MORTGAGE') / 3,
@@ -285,9 +282,7 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
   );
 
   // ── Savings/securities balance & monthly flows ─────────────────────────────
-  const savingsAccounts = Array.isArray(report.savings)
-    ? (report.savings as OFSaving[])
-    : [];
+  const savingsAccounts = Array.isArray(report.savings) ? report.savings : [];
   const savingsBalance = savingsAccounts.reduce(
     (acc, s) => acc + num(s?.amount),
     0,
@@ -353,7 +348,8 @@ export function extractFeatures(raw: unknown): FinancialFeatures {
     report.countAkam,
     report.countCancelled,
   ];
-  const systemFlagsAvailable = rawCounters.some((c) => c != null);  const systemFlags = {
+  const systemFlagsAvailable = rawCounters.some((c) => c != null);
+  const systemFlags = {
     loanOverDueCount: num(report.countLoanOverDue),
     foreclosureCount: num(report.countForeclosure),
     alertNoticeCount: num(report.countAlertNotice),

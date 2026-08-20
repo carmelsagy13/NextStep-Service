@@ -15,9 +15,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `up`   : add `criteria` column (nullable varchar).
  * `down` : drop `criteria` column.
  */
-export class AddRoadmapGoalCriteria1750000500000
-  implements MigrationInterface
-{
+export class AddRoadmapGoalCriteria1750000500000 implements MigrationInterface {
   name = 'AddRoadmapGoalCriteria1750000500000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -8,7 +8,9 @@ import { UserGoalStatus } from '../../database/entities/user-goal.entity.js';
  * degrades to a plain one and this block is null.
  */
 export class MarketingMetaDto {
-  @ApiProperty({ description: 'Stable offer key, the handle for future click attribution.' })
+  @ApiProperty({
+    description: 'Stable offer key, the handle for future click attribution.',
+  })
   offerCode: string;
 
   @ApiProperty({ description: 'Partner display name in Hebrew.' })
@@ -17,7 +19,9 @@ export class MarketingMetaDto {
   @ApiProperty({ description: 'Absolute URL of the partner logo.' })
   partnerLogoUrl: string;
 
-  @ApiPropertyOptional({ description: 'Absolute URL of an optional wide banner.' })
+  @ApiPropertyOptional({
+    description: 'Absolute URL of an optional wide banner.',
+  })
   bannerUrl: string | null;
 
   @ApiPropertyOptional({ description: 'Hex accent colour for card styling.' })
@@ -55,24 +59,32 @@ export class GoalResponseDto {
   @ApiProperty({ enum: UserGoalStatus }) status: UserGoalStatus;
   @ApiProperty() priority: number;
   @ApiProperty({ nullable: true }) assignedAt: Date | null;
+  @ApiProperty({ nullable: true }) assignedAtStep: number | null;
   @ApiProperty({ nullable: true }) completedAt: Date | null;
+  @ApiProperty({ nullable: true }) completedAtStep: number | null;
   @ApiProperty({ nullable: true }) removedAt: Date | null;
   @ApiProperty({ nullable: true }) removalReason: string | null;
   @ApiProperty({ nullable: true }) sourceProfileHistoryId: string | null;
   @ApiProperty({ nullable: true }) aiInsight: string | null;
-  @ApiProperty({ type: Object, nullable: true }) dynamicParams: Record<string, unknown> | null;
+  @ApiProperty({ type: Object, nullable: true }) dynamicParams: Record<
+    string,
+    unknown
+  > | null;
 
   @ApiProperty({
     enum: RoadmapGoalType,
     description:
-      'Presentation category. Reported as `personal` when a marketing goal\'s offer is no longer live.',
+      "Presentation category. Reported as `personal` when a marketing goal's offer is no longer live.",
   })
   goalType: RoadmapGoalType;
 
   @ApiPropertyOptional({ type: MarketingMetaDto, nullable: true })
   marketing: MarketingMetaDto | null;
 
-  @ApiPropertyOptional({ description: 'The originating roadmap template, when the goal came from one.' })
+  @ApiPropertyOptional({
+    description:
+      'The originating roadmap template, when the goal came from one.',
+  })
   roadmapGoal?: {
     goalId: string;
     stepId: number;

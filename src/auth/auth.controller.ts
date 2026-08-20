@@ -25,14 +25,18 @@ export class AuthController {
   }
 
   @Get('register')
-  @ApiOperation({ summary: 'Temporary local testing fallback for register via query params' })
+  @ApiOperation({
+    summary: 'Temporary local testing fallback for register via query params',
+  })
   registerViaQuery(
     @Query('id') id?: string,
     @Query('email') email?: string,
     @Query('password') password?: string,
   ) {
     if (!id || !email || !password) {
-      throw new BadRequestException('Use POST /auth/register with JSON body, or provide id/email/password query params for local testing');
+      throw new BadRequestException(
+        'Use POST /auth/register with JSON body, or provide id/email/password query params for local testing',
+      );
     }
 
     return this.authService.register({ id, email, password });
@@ -46,10 +50,17 @@ export class AuthController {
   }
 
   @Get('login')
-  @ApiOperation({ summary: 'Temporary local testing fallback for login via query params' })
-  loginViaQuery(@Query('email') email?: string, @Query('password') password?: string) {
+  @ApiOperation({
+    summary: 'Temporary local testing fallback for login via query params',
+  })
+  loginViaQuery(
+    @Query('email') email?: string,
+    @Query('password') password?: string,
+  ) {
     if (!email || !password) {
-      throw new BadRequestException('Use POST /auth/login with JSON body, or provide email/password query params for local testing');
+      throw new BadRequestException(
+        'Use POST /auth/login with JSON body, or provide email/password query params for local testing',
+      );
     }
 
     return this.authService.login({ email, password });
