@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RoadmapGoalType } from '../../database/entities/roadmap-goal.entity.js';
+import { GoalEffortLevel } from '../../database/entities/goal-effort-level.enum.js';
 import {
   GoalDismissalReason,
   UserGoalStatus,
@@ -71,8 +72,32 @@ export class GoalResponseDto {
   dismissalReason: GoalDismissalReason | null;
   @ApiProperty({ nullable: true }) dismissalNote: string | null;
   @ApiProperty({ nullable: true }) dismissedAt: Date | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'When set to a future date the user deferred this task until then. The status stays `active`; the task is cleared automatically once the date passes.',
+  })
+  snoozedUntil: Date | null;
+
   @ApiProperty({ nullable: true }) sourceProfileHistoryId: string | null;
   @ApiProperty({ nullable: true }) aiInsight: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'One Hebrew sentence naming the figures that made this task the right one for this user now. Null until an analysis run fills it.',
+  })
+  whyNow: string | null;
+
+  @ApiProperty({
+    enum: GoalEffortLevel,
+    nullable: true,
+    description:
+      "How much work the task demands. Resolved value: the task's own override when present, otherwise the roadmap template's authored default.",
+  })
+  effortLevel: GoalEffortLevel | null;
+
   @ApiProperty({ type: Object, nullable: true }) dynamicParams: Record<
     string,
     unknown
@@ -103,5 +128,6 @@ export class GoalResponseDto {
     requiredContext: string | null;
     isActive: boolean;
     priority: number;
+    effortLevel: GoalEffortLevel | null;
   };
 }

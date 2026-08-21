@@ -15,6 +15,7 @@ import { RoadmapGoal } from '../database/entities/roadmap-goal.entity.js';
 import { UserProfile } from '../database/entities/user-profile.entity.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
 import { DismissGoalDto } from './dto/dismiss-goal.dto.js';
+import { SnoozeGoalDto } from './dto/snooze-goal.dto.js';
 import { GoalResponseDto } from './dto/goal-response.dto.js';
 import {
   GOAL_RESPONSE_RELATIONS,
@@ -44,8 +45,12 @@ const SERVER_OWNED_GOAL_FIELDS = [
   'dismissalReason',
   'dismissalNote',
   'dismissedAt',
+  'snoozedUntil',
   'sourceProfileHistoryId',
 ] as const;
+
+/** Upper bound on how far ahead a task may be deferred (~2 months). */
+const MAX_SNOOZE_DAYS = 60;
 
 @Injectable()
 export class GoalsService {
@@ -140,10 +145,31 @@ export class GoalsService {
       order: { priority: 'ASC' },
     });
 
+    await this.clearExpiredSnoozes(goals);
+
     return toGoalResponseList(
       goals,
       resolveAssetBaseUrl(this.config.get<string>('PUBLIC_ASSET_BASE_URL')),
     );
+  }
+
+  /**
+   * Brings back tasks whose snooze has run out. Done lazily on read rather than
+   * on a schedule: this is the only path the client loads tasks through, so a
+   * cron job would add a moving part without changing what the user sees.
+   * Mutates the passed rows so the caller serializes the post-sweep state.
+   */
+  private async clearExpiredSnoozes(goals: UserGoal[]): Promise<void> {
+    const now = Date.now();
+    const expired = goals.filter(
+      (goal) =>
+        goal.snoozedUntil != null &&
+        new Date(goal.snoozedUntil).getTime() <= now,
+    );
+    if (!expired.length) return;
+
+    for (const goal of expired) goal.snoozedUntil = null;
+    await this.goalRepo.save(expired);
   }
 
   async createGoal(userId: string, body: any) {
@@ -230,6 +256,42 @@ export class GoalsService {
     return this.goalRepo.save(goal);
   }
 
+  /**
+   * Defers a task to a date the user picked, or brings it back when
+   * `snoozedUntil` is null. Never touches `status`: a snoozed task stays ACTIVE,
+   * so the user's dismissal feedback and step attribution are left intact.
+   */
+  async snoozeGoal(userId: string, dto: SnoozeGoalDto) {
+    const goal = await this.goalRepo.findOne({
+      where: { goalId: dto.goalId, userId },
+    });
+
+    if (!goal)
+      throw new NotFoundException(
+        'Goal not found or does not belong to this user',
+      );
+
+    if (dto.snoozedUntil === null) {
+      goal.snoozedUntil = null;
+      return this.goalRepo.save(goal);
+    }
+
+    if (goal.status !== UserGoalStatus.ACTIVE)
+      throw new BadRequestException('Only an active task can be snoozed');
+
+    const until = new Date(dto.snoozedUntil);
+    const now = Date.now();
+    if (until.getTime() <= now)
+      throw new BadRequestException('Snooze date must be in the future');
+    if (until.getTime() > now + MAX_SNOOZE_DAYS * 24 * 60 * 60 * 1000)
+      throw new BadRequestException(
+        `A task cannot be snoozed for more than ${MAX_SNOOZE_DAYS} days`,
+      );
+
+    goal.snoozedUntil = until;
+    return this.goalRepo.save(goal);
+  }
+
   private applyStatusTransition(
     goal: UserGoal,
     status: UserGoalStatus,
@@ -238,6 +300,8 @@ export class GoalsService {
     const completed = status === UserGoalStatus.COMPLETED;
     const alreadyCompleted = goal.status === UserGoalStatus.COMPLETED;
     goal.status = status;
+    // Any lifecycle move settles the task, so a pending deferral is moot.
+    goal.snoozedUntil = null;
     // Completion is stamped once. Re-sending `completed` for an already finished
     // task keeps the original step/time; only a real transition records new ones.
     if (!completed) {

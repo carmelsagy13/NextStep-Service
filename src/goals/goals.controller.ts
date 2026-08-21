@@ -12,6 +12,7 @@ import { StepIsolationGuard } from './guards/step-isolation.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
 import { DismissGoalDto } from './dto/dismiss-goal.dto.js';
+import { SnoozeGoalDto } from './dto/snooze-goal.dto.js';
 import { GoalResponseDto } from './dto/goal-response.dto.js';
 import { UserGoalStatus } from '../database/entities/user-goal.entity.js';
 
@@ -84,6 +85,19 @@ export class GoalsController {
     @Body() dto: DismissGoalDto,
   ) {
     return this.goalsService.dismissGoal(user.userId, dto);
+  }
+
+  @Post('snooze')
+  @ApiOperation({
+    summary: 'Defer a goal to a date the user chose',
+    description:
+      'Hides an active task from the open list until `snoozedUntil`, without changing its status or discarding any feedback. It returns on its own once the date passes. Send `snoozedUntil: null` to bring it back immediately.',
+  })
+  snoozeGoal(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: SnoozeGoalDto,
+  ) {
+    return this.goalsService.snoozeGoal(user.userId, dto);
   }
 
   @Post('delete')

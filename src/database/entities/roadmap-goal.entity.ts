@@ -6,6 +6,7 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
+import { GoalEffortLevel } from './goal-effort-level.enum.js';
 import { UserGoal } from './user-goal.entity.js';
 import { PartnerOffer } from './partner-offer.entity.js';
 
@@ -74,6 +75,15 @@ export class RoadmapGoal {
 
   @Column({ type: 'text', name: 'required_context_text', nullable: true })
   requiredContextText: string;
+
+  /** Authored default effort for this template; a user task may override it. */
+  @Column({
+    type: 'enum',
+    enum: GoalEffortLevel,
+    name: 'effort_level',
+    nullable: true,
+  })
+  effortLevel: GoalEffortLevel | null;
 
   /**
    * The sponsored campaign this goal promotes. Set if and only if

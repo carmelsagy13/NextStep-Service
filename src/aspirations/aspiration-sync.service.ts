@@ -19,6 +19,11 @@ import {
   isRoadmapGoalEligible,
 } from '../common/roadmap-goal-eligibility.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
+import {
+  COACHING_FIELDS_GUIDANCE,
+  normalizeWhyNow,
+  parseEffortLevel,
+} from '../common/goal-coaching-fields.js';
 
 /** A single `update` instruction the LLM returns for a stale linked task. */
 interface TaskUpdate {
@@ -27,6 +32,8 @@ interface TaskUpdate {
   target_date?: string | null;
   dynamic_params?: Record<string, unknown> | null;
   ai_insight?: string | null;
+  why_now?: string | null;
+  effort_level?: string | null;
   priority?: number | null;
   reason?: string;
 }
@@ -43,6 +50,8 @@ interface TaskAdd {
   target_date?: string | null;
   dynamic_params?: Record<string, unknown> | null;
   ai_insight?: string | null;
+  why_now?: string | null;
+  effort_level?: string | null;
   priority?: number | null;
   reason?: string;
 }
@@ -226,6 +235,7 @@ export class AspirationSyncService {
               `    description_template: "${g.descriptionTemplate}"`,
               `    step: ${g.stepId}`,
               `    criteria: ${g.criteria ?? 'null'}`,
+              g.effortLevel ? `    effort_level: ${g.effortLevel}` : null,
               g.dynamicParams
                 ? `    dynamic_params_template: ${JSON.stringify(g.dynamicParams)}`
                 : null,
@@ -271,6 +281,8 @@ export class AspirationSyncService {
       '  NEVER invent IDs. Do not add more than one task per aspiration.',
       '- If a task already matches its aspiration, omit it from "updates".',
       '',
+      COACHING_FIELDS_GUIDANCE,
+      '',
       '## Required Output Schema (single JSON object):',
       JSON.stringify({
         updates: [
@@ -280,6 +292,8 @@ export class AspirationSyncService {
             target_date: '<ISO-8601 string or null>',
             dynamic_params: { key: 'value' },
             ai_insight: '<Hebrew justification of the adjustment>',
+            why_now: '<Hebrew sentence citing this user\u2019s actual figures>',
+            effort_level: '<quick | moderate | project>',
             priority: '<integer or omit>',
             reason: '<short Hebrew note on what changed>',
           },
@@ -292,6 +306,8 @@ export class AspirationSyncService {
             target_date: '<ISO-8601 string or null>',
             dynamic_params: { key: 'value' },
             ai_insight: '<Hebrew explanation of the new task>',
+            why_now: '<Hebrew sentence citing this user\u2019s actual figures>',
+            effort_level: '<quick | moderate | project>',
             priority: '<integer or omit>',
             reason: '<short Hebrew note on why it was added>',
           },
@@ -358,6 +374,10 @@ export class AspirationSyncService {
         if (u.ai_insight) {
           task.aiInsight = u.ai_insight;
         }
+        const updatedWhyNow = normalizeWhyNow(u.why_now);
+        if (updatedWhyNow) task.whyNow = updatedWhyNow;
+        const updatedEffort = parseEffortLevel(u.effort_level);
+        if (updatedEffort) task.effortLevel = updatedEffort;
         if (u.priority != null && Number.isFinite(Number(u.priority))) {
           task.priority = Number(u.priority);
         }
@@ -406,6 +426,9 @@ export class AspirationSyncService {
               ? Number(a.priority)
               : template.priority,
           aiInsight: a.ai_insight ?? undefined,
+          whyNow: normalizeWhyNow(a.why_now),
+          effortLevel:
+            parseEffortLevel(a.effort_level) ?? template.effortLevel ?? null,
           syncedAspirationRevision: revision,
         });
         touched.push(task);

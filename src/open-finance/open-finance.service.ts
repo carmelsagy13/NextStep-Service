@@ -41,6 +41,11 @@ import {
   MAX_ACTIVE_MARKETING_GOALS,
 } from '../common/marketing-goal-policy.js';
 import { buildDismissalFeedbackSection } from '../common/goal-dismissal-feedback.js';
+import {
+  COACHING_FIELDS_GUIDANCE,
+  normalizeWhyNow,
+  parseEffortLevel,
+} from '../common/goal-coaching-fields.js';
 import { GoalResponseDto } from '../goals/dto/goal-response.dto.js';
 import {
   GOAL_RESPONSE_RELATIONS,
@@ -132,6 +137,8 @@ export interface ReconciliationDecision {
       target_date?: string | null;
       dynamic_params?: Record<string, unknown> | null;
       ai_insight?: string | null;
+      why_now?: string | null;
+      effort_level?: string | null;
       new_priority?: number | null;
       reason?: string;
     }>;
@@ -142,6 +149,8 @@ export interface ReconciliationDecision {
       target_date: string | null;
       dynamic_params: Record<string, unknown>;
       ai_insight: string;
+      why_now?: string | null;
+      effort_level?: string | null;
       priority: number;
     }>;
   };
@@ -636,6 +645,7 @@ export class OpenFinanceService {
                   g.requiredContext
                     ? `    required_context: "${g.requiredContext}"`
                     : null,
+                  g.effortLevel ? `    effort_level: ${g.effortLevel}` : null,
                   g.requiredContextText
                     ? `    required_context_text: "${g.requiredContextText}"`
                     : null,
@@ -669,6 +679,11 @@ export class OpenFinanceService {
                 ? `    dynamic_params: ${JSON.stringify(t.dynamicParams)}`
                 : null,
               t.aiInsight ? `    ai_insight: "${t.aiInsight}"` : null,
+              t.whyNow ? `    why_now: "${t.whyNow}"` : null,
+              t.effortLevel ? `    effort_level: ${t.effortLevel}` : null,
+              t.snoozedUntil
+                ? `    snoozed_until: ${t.snoozedUntil instanceof Date ? t.snoozedUntil.toISOString().slice(0, 10) : t.snoozedUntil}`
+                : null,
               t.roadmapGoalId
                 ? `    roadmap_goal_id: "${t.roadmapGoalId}"`
                 : null,
@@ -760,6 +775,7 @@ export class OpenFinanceService {
       '- Put tasks that are no longer relevant (e.g. ones the user has outgrown or that no longer fit their situation) into "remove". Do NOT remove a task merely because it belongs to a different step than the current one — keep it if it is still suitable.',
       '- Do NOT re-add a task the user marked as NOT RELEVANT (see that section below) unless their financial data changed materially enough that their stated reason no longer holds.',
       '- Put tasks the data shows are achieved into "complete".',
+      '- A task carrying a future `snoozed_until` was deliberately deferred by the user to that date. Leave it in "keep": do NOT remove it, do NOT reprioritize it, and do NOT add the same template again.',
       '- Only "add" templates that are genuinely relevant and not already assigned.',
       '- An aspiration is a SIDE INTEREST, not a filter on the roadmap. Select and rank tasks EXACTLY as you would if the user had declared no aspirations at all, then optionally add ONE task that serves an aspiration. An aspiration must NEVER be a reason to remove, skip, deprioritise or decline to add a roadmap task that the financial data supports on its own — the roadmap is what moves the user up the pyramid; an aspiration only says what they are personally saving for.',
       '- At most ONE aspiration-linked task should be active per aspiration, and aspiration-linked tasks must not occupy the top priority slots ahead of current-step roadmap tasks.',
@@ -844,6 +860,8 @@ export class OpenFinanceService {
       '## Available Goal Templates (task bank, grouped by step)',
       taskBankSection,
       '',
+      COACHING_FIELDS_GUIDANCE,
+      '',
       '## Required Output Schema (single JSON object):',
       JSON.stringify({
         roadmap_state: {
@@ -878,6 +896,9 @@ export class OpenFinanceService {
               target_date: '<ISO-8601 string or null>',
               dynamic_params: { key: 'value' },
               ai_insight: '<Hebrew justification of the adjustment>',
+              why_now:
+                '<Hebrew sentence citing this user\u2019s actual figures>',
+              effort_level: '<quick | moderate | project>',
               new_priority: '<integer or omit>',
               reason: '<short Hebrew note on what changed>',
             },
@@ -892,6 +913,9 @@ export class OpenFinanceService {
               target_date: '<ISO-8601 string or null>',
               dynamic_params: { key: 'value' },
               ai_insight: '<Hebrew justification>',
+              why_now:
+                '<Hebrew sentence citing this user\u2019s actual figures>',
+              effort_level: '<quick | moderate | project>',
               priority: '<integer>',
             },
           ],
@@ -1177,6 +1201,10 @@ export class OpenFinanceService {
           t.dynamicParams = u.dynamic_params as Record<string, any>;
         }
         if (u.ai_insight) t.aiInsight = u.ai_insight;
+        const updatedWhyNow = normalizeWhyNow(u.why_now);
+        if (updatedWhyNow) t.whyNow = updatedWhyNow;
+        const updatedEffort = parseEffortLevel(u.effort_level);
+        if (updatedEffort) t.effortLevel = updatedEffort;
         if (u.new_priority != null && Number.isFinite(Number(u.new_priority))) {
           t.priority = Number(u.new_priority);
         }
@@ -1244,6 +1272,8 @@ export class OpenFinanceService {
           dup.assignedAtStep = currentStep;
           dup.dynamicParams = a.dynamic_params ?? dup.dynamicParams ?? {};
           dup.aiInsight = a.ai_insight ?? dup.aiInsight;
+          dup.whyNow = normalizeWhyNow(a.why_now) ?? dup.whyNow;
+          dup.effortLevel = parseEffortLevel(a.effort_level) ?? dup.effortLevel;
           dup.priority = Number(a.priority) || dup.priority || 0;
           if (a.target_amount != null) dup.targetAmount = a.target_amount;
           if (a.target_date) dup.targetDate = new Date(a.target_date);
@@ -1271,6 +1301,10 @@ export class OpenFinanceService {
             priority: Number(a.priority) || 0,
             sourceProfileHistoryId: historyId,
             aiInsight: a.ai_insight,
+            whyNow: normalizeWhyNow(a.why_now),
+            // Template default applies when the model omits or invents a level.
+            effortLevel:
+              parseEffortLevel(a.effort_level) ?? template?.effortLevel ?? null,
           });
           if (linkedAspiration) {
             syncedAspirationIds.add(linkedAspiration.aspirationId);

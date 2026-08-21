@@ -13,6 +13,12 @@ import {
 } from '../database/entities/roadmap-goal.entity.js';
 import { filterMarketingGoals } from '../common/marketing-goal-policy.js';
 import { buildDismissalFeedbackSection } from '../common/goal-dismissal-feedback.js';
+import {
+  COACHING_FIELDS_GUIDANCE,
+  normalizeWhyNow,
+  parseEffortLevel,
+} from '../common/goal-coaching-fields.js';
+import { GoalEffortLevel } from '../database/entities/goal-effort-level.enum.js';
 import { UserGoal } from '../database/entities/user-goal.entity.js';
 import { LlmClientService } from '../llm-client/llm-client.service.js';
 import {
@@ -25,6 +31,8 @@ export interface PersonalizedGoalRecommendation {
   title: string;
   priority: number;
   ai_insight: string;
+  why_now: string | null;
+  effort_level: GoalEffortLevel | null;
   dynamic_params: Record<string, any>;
   goal_type: RoadmapGoalType;
 }
@@ -139,6 +147,7 @@ export class LlmOrchestratorService {
       description_template: g.descriptionTemplate,
       required_context: g.requiredContext ?? null,
       dynamic_params_schema: g.dynamicParams ?? {},
+      effort_level: g.effortLevel ?? null,
       ...(g.type === RoadmapGoalType.MARKETING && g.offer
         ? {
             partner: g.offer.partner?.nameHe ?? null,
@@ -188,6 +197,8 @@ export class LlmOrchestratorService {
       '3. Return ALL goals ordered by relevance to this user (most relevant first).',
       '4. Preserve the exact roadmap_goal_id and title from the list.',
       '',
+      COACHING_FIELDS_GUIDANCE,
+      '',
       '## Sponsored Goals (type = "marketing")',
       'A goal marked `type: "marketing"` promotes a partner product. It has already',
       'passed a suitability check, so it MAY be included — but treat it as the least',
@@ -207,6 +218,9 @@ export class LlmOrchestratorService {
               title: '<exact title from Available Goals>',
               priority: '<integer — copy from Available Goals>',
               ai_insight: '<Hebrew personalized explanation>',
+              why_now:
+                '<Hebrew sentence citing this user\u2019s actual figures>',
+              effort_level: '<quick | moderate | project>',
               dynamic_params: { key: 'value' },
             },
           ],
@@ -251,6 +265,9 @@ export class LlmOrchestratorService {
         title: r.title ?? template?.title ?? '',
         priority: Number(r.priority) || 0,
         ai_insight: r.ai_insight ?? '',
+        why_now: normalizeWhyNow(r.why_now),
+        effort_level:
+          parseEffortLevel(r.effort_level) ?? template?.effortLevel ?? null,
         dynamic_params: r.dynamic_params ?? {},
         goal_type: template?.type ?? RoadmapGoalType.PERSONAL,
       };

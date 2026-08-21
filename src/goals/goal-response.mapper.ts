@@ -97,8 +97,12 @@ export function toGoalResponse(
     dismissalReason: goal.dismissalReason ?? null,
     dismissalNote: goal.dismissalNote ?? null,
     dismissedAt: goal.dismissedAt ?? null,
+    snoozedUntil: goal.snoozedUntil ?? null,
     sourceProfileHistoryId: goal.sourceProfileHistoryId ?? null,
     aiInsight: goal.aiInsight ?? null,
+    whyNow: goal.whyNow ?? null,
+    // The task's own value wins; the template's authored default is the fallback.
+    effortLevel: goal.effortLevel ?? template?.effortLevel ?? null,
     dynamicParams: goal.dynamicParams ?? null,
     goalType,
     marketing,
@@ -114,6 +118,7 @@ export function toGoalResponse(
           requiredContext: template.requiredContext ?? null,
           isActive: template.isActive,
           priority: template.priority,
+          effortLevel: template.effortLevel ?? null,
         }
       : undefined,
   };

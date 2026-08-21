@@ -7,6 +7,7 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 import { User } from './user.entity.js';
+import { GoalEffortLevel } from './goal-effort-level.enum.js';
 import { RoadmapGoal } from './roadmap-goal.entity.js';
 import { UserAspiration } from './user-aspiration.entity.js';
 
@@ -160,6 +161,16 @@ export class UserGoal {
   @Column({ type: 'timestamp', name: 'dismissed_at', nullable: true })
   dismissedAt: Date | null;
 
+  // ── User snooze ──────────────────────────────────────────────────────────
+  /**
+   * When set to a future date the user deferred this task to that date. The
+   * status stays ACTIVE throughout; the task is simply filtered out of the open
+   * list until the date passes, at which point `GoalsService.getGoals` clears
+   * this column and the task reappears.
+   */
+  @Column({ type: 'timestamp', name: 'snoozed_until', nullable: true })
+  snoozedUntil: Date | null;
+
   /**
    * Provenance: the UserProfileHistory assessment that last created, reactivated
    * or reprioritized this task. Plain UUID reference (no FK constraint) to keep
@@ -170,6 +181,26 @@ export class UserGoal {
 
   @Column({ type: 'text', name: 'ai_insight', nullable: true })
   aiInsight: string;
+
+  /**
+   * One Hebrew sentence naming the concrete figures that made this task the
+   * right one for this user now. Complements `aiInsight`, which says what to do
+   * rather than why it was chosen. NULL until an analysis run fills it.
+   */
+  @Column({ type: 'text', name: 'why_now', nullable: true })
+  whyNow: string | null;
+
+  /**
+   * Per-user override of the template's effort level. NULL means "use the
+   * template value" — resolved in the goal response mapper, never here.
+   */
+  @Column({
+    type: 'enum',
+    enum: GoalEffortLevel,
+    name: 'effort_level',
+    nullable: true,
+  })
+  effortLevel: GoalEffortLevel | null;
 
   @ManyToOne(() => User, (user) => user.goals, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
