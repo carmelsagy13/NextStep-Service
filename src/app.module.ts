@@ -13,7 +13,6 @@ import { EventDetectionModule } from './event-detection/event-detection.module.j
 import { RoadmapModule } from './roadmap/roadmap.module.js';
 import { GoalsModule } from './goals/goals.module.js';
 import { AspirationsModule } from './aspirations/aspirations.module.js';
-import { NotificationsModule } from './notifications/notifications.module.js';
 import { LlmOrchestratorModule } from './llm-orchestrator/llm-orchestrator.module.js';
 import { LlmClientModule } from './llm-client/llm-client.module.js';
 import { DemoModule } from './demo/demo.module.js';
@@ -59,7 +58,6 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
     RoadmapModule,
     GoalsModule,
     AspirationsModule,
-    NotificationsModule,
     LlmOrchestratorModule,
     DemoModule,
     DiagnosticsModule,

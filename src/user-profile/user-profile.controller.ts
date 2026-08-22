@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Header } from '@nestjs/common';
+import { Controller, Get, UseGuards, Header } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { UserProfileService } from './user-profile.service.js';
@@ -39,17 +39,5 @@ export class UserProfileController {
   })
   getProgress(@CurrentUser() user: { userId: string }) {
     return this.userProfileService.getProgress(user.userId);
-  }
-
-  @Post('notificationPreferences')
-  @ApiOperation({ summary: 'Save notification preferences' })
-  saveNotificationPreferences(
-    @CurrentUser() user: { userId: string },
-    @Body() body: any,
-  ) {
-    return this.userProfileService.saveNotificationPreferences(
-      user.userId,
-      body,
-    );
   }
 }

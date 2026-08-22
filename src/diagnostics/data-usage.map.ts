@@ -183,20 +183,6 @@ export const TABLE_USAGE: Record<string, TableUsage> = {
     readBy: '— never read',
     verdict: 'WRITE-ONLY',
   },
-  notification_templates: {
-    entity: 'NotificationTemplate',
-    purpose: 'Notification copy per trigger type',
-    writtenBy: '— (seed/migration only)',
-    readBy: 'notifications.getNotifications (via relation)',
-    verdict: 'SEED-ONLY',
-  },
-  user_notifications: {
-    entity: 'UserNotification',
-    purpose: 'Per-user notification inbox state',
-    writtenBy: 'notifications.markAsRead',
-    readBy: 'notifications.getNotifications',
-    verdict: 'ACTIVE',
-  },
   bank_consents: {
     entity: 'BankConsent',
     purpose: 'Skeleton for the old bank-consent flow',
