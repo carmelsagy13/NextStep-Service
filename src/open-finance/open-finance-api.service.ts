@@ -47,6 +47,10 @@ import {
   auditRawCollection,
   auditRawObject,
 } from '../diagnostics/open-finance-audit.js';
+import {
+  OFCredentials,
+  resolveOFCredentials,
+} from './open-finance-credentials.js';
 
 /**
  * Integrates with the Open Finance API to fetch a customer's financial data
@@ -85,13 +89,13 @@ function slimTransaction(tx: OFDataTransaction): OFSlimTransaction {
 export class OpenFinanceApiService {
   private readonly logger = new Logger(OpenFinanceApiService.name);
 
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly username: string;
   private readonly http: AxiosInstance;
 
-  private cachedToken: string | null = null;
-  private cachedTokenExpiresAt = 0;
+  /** Access tokens are per Open Finance identity, keyed by OF username. */
+  private readonly tokenCache = new Map<
+    string,
+    { token: string; expiresAt: number }
+  >();
 
   constructor(
     private readonly openFinanceService: OpenFinanceService,
@@ -99,19 +103,13 @@ export class OpenFinanceApiService {
     private readonly userRepo: Repository<User>,
   ) {
     const baseUrl = process.env.OF_BASE_URL;
-    const clientId = process.env.OF_CLIENT_ID;
-    const clientSecret = process.env.OF_CLIENT_SECRET;
-    const username = process.env.OF_USERNAME;
 
-    if (!baseUrl || !clientId || !clientSecret || !username) {
+    if (!baseUrl) {
       throw new InternalServerErrorException(
-        'Open Finance API is not configured. Required env vars: OF_BASE_URL, OF_CLIENT_ID, OF_CLIENT_SECRET, OF_USERNAME',
+        'Open Finance API is not configured. Required env var: OF_BASE_URL',
       );
     }
 
-    this.clientId = clientId;
-    this.clientSecret = clientSecret;
-    this.username = username;
     this.http = axios.create({
       baseURL: baseUrl.replace(/\/+$/, ''),
       timeout: HTTP_TIMEOUT_MS,
@@ -134,9 +132,18 @@ export class OpenFinanceApiService {
     // user.id (national ID) is the Open Finance external customer ID.
     const externalUserId = user.id;
 
-    this.logger.log(`connectAndAnalyze START — customer=${externalUserId}`);
+    const credentials = resolveOFCredentials(user.email);
+    if (!credentials) {
+      throw new InternalServerErrorException(
+        `No Open Finance credentials configured for ${user.email}. Add an OF_USER_KEYS profile with a matching OF_<KEY>_USERNAME.`,
+      );
+    }
 
-    const token = await this.authenticate();
+    this.logger.log(
+      `connectAndAnalyze START — customer=${externalUserId}, ofProfile=${credentials.key}`,
+    );
+
+    const token = await this.authenticate(credentials);
     const connectionIds = await this.activeConnectionIds(token, externalUserId);
 
     const report = await this.fetchAggregatedReport(
@@ -159,20 +166,18 @@ export class OpenFinanceApiService {
 
   // -------------------- Authentication --------------------
 
-  private async authenticate(): Promise<string> {
-    const now = Date.now();
-    if (
-      this.cachedToken &&
-      now < this.cachedTokenExpiresAt - TOKEN_EXPIRY_SKEW_MS
-    ) {
-      return this.cachedToken;
+  private async authenticate(credentials: OFCredentials): Promise<string> {
+    const cacheKey = credentials.username.toLowerCase();
+    const cached = this.tokenCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt - TOKEN_EXPIRY_SKEW_MS) {
+      return cached.token;
     }
 
     try {
       const { data } = await this.http.post<OFTokenResponse>('/oauth/token', {
-        clientId: this.clientId,
-        clientSecret: this.clientSecret,
-        userId: this.username,
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
+        userId: credentials.username,
       });
 
       const token = firstString(
@@ -190,9 +195,13 @@ export class OpenFinanceApiService {
       const ttlSeconds = Number(
         data?.expires_in ?? data?.expiresIn ?? TOKEN_DEFAULT_TTL_SECONDS,
       );
-      this.cachedToken = token;
-      this.cachedTokenExpiresAt = Date.now() + ttlSeconds * 1_000;
-      this.logger.log(`Authenticated (token TTL=${ttlSeconds}s)`);
+      this.tokenCache.set(cacheKey, {
+        token,
+        expiresAt: Date.now() + ttlSeconds * 1_000,
+      });
+      this.logger.log(
+        `Authenticated as ${credentials.key} (token TTL=${ttlSeconds}s)`,
+      );
       return token;
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;
@@ -484,7 +493,7 @@ export class OpenFinanceApiService {
         });
         data = res.data;
       } catch (err) {
-        throw this.toHttpException(err, context);
+        throw this.toHttpException(err, context, token);
       }
 
       if (Array.isArray(data?.items)) items.push(...data.items);
@@ -501,7 +510,11 @@ export class OpenFinanceApiService {
   // -------------------- Error mapping --------------------
 
   /** Maps an Axios/known error to an appropriate Nest HTTP exception. */
-  private toHttpException(err: unknown, context: string): Error {
+  private toHttpException(
+    err: unknown,
+    context: string,
+    token?: string,
+  ): Error {
     if (
       err instanceof BadGatewayException ||
       err instanceof UnauthorizedException ||
@@ -515,7 +528,7 @@ export class OpenFinanceApiService {
       `${context} FAILED (status=${status}): ${describeAxiosError(ax)}`,
     );
     if (status === 401) {
-      this.cachedToken = null;
+      if (token) this.invalidateToken(token);
       return new UnauthorizedException(
         `Open Finance rejected the access token during ${context}`,
       );
@@ -528,5 +541,12 @@ export class OpenFinanceApiService {
     return new BadGatewayException(
       `Open Finance ${context} failed: ${describeAxiosError(ax)}`,
     );
+  }
+
+  /** Drops a rejected token so the next call re-authenticates that identity. */
+  private invalidateToken(token: string): void {
+    for (const [key, entry] of this.tokenCache) {
+      if (entry.token === token) this.tokenCache.delete(key);
+    }
   }
 }
